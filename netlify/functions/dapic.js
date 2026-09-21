@@ -75,6 +75,7 @@ async function login() {
       Empresa: identificador,
       empresa: identificador,
       identificador,
+      TokenIntegracao: token,
       Token: token,
       token,
     }),
