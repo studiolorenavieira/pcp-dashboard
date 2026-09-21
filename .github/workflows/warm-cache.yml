@@ -38,21 +38,10 @@ jobs:
               --data-urlencode "offset=$OFFSET" \
               --data-urlencode "limite=100")
 
-            NEXT=$(echo "$RESP" | python3 -c "
-import sys, json
-try:
-    d = json.load(sys.stdin)
-except Exception as e:
-    print('ERRO', file=sys.stderr)
-    print(e, file=sys.stderr)
-    sys.exit(1)
-next_offset = d.get('proximoOffset')
-total = d.get('totalProdutos')
-qtd = len(d.get('produtos') or [])
-print(f'offset={d.get(\"offset\")} produtos_nesta_rodada={qtd} total={total} proximoOffset={next_offset}', file=sys.stderr)
-print(next_offset if next_offset is not None else '')
-")
-            echo "rodada $RODADA -> $NEXT"
+            PROCESSADOS=$(echo "$RESP" | jq -r '.produtos | length')
+            TOTAL=$(echo "$RESP" | jq -r '.totalProdutos')
+            NEXT=$(echo "$RESP" | jq -r '.proximoOffset // empty')
+            echo "rodada $RODADA offset=$OFFSET processados=$PROCESSADOS total=$TOTAL proximoOffset=$NEXT"
 
             if [ -z "$NEXT" ]; then
               echo "Cache totalmente quente — catalogo inteiro percorrido nesta rodada."
