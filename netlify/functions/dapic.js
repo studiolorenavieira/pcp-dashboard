@@ -66,10 +66,18 @@ async function login() {
     );
   }
 
+  // A API DAPIC respondeu exigindo o campo "Empresa" (não documentado publicamente).
+  // Enviamos as duas variações de nome para funcionar com qualquer uma que a API espere.
   const res = await fetch(`${DAPIC_BASE}/autenticacao/v1/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ identificador, token }),
+    body: JSON.stringify({
+      Empresa: identificador,
+      empresa: identificador,
+      identificador,
+      Token: token,
+      token,
+    }),
   });
 
   if (!res.ok) {
