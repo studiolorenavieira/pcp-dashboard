@@ -19,7 +19,6 @@ const ENDPOINT_VARIANTS = {
   "v1/pedidosvendas": ["v1/pedidosvendas", "v1/pedidosvenda", "v1/pedidovendas", "v1/pedidos"],
   "v1/faturas": ["v1/faturas", "v1/fatura", "v1/notasfiscais", "v1/nfe"],
   "v1/ordensproducao": ["v1/ordensproducao", "v1/ordemproducao", "v1/ordensdeproducao", "v1/op"],
-  "v1/estoques": ["v1/estoques", "v1/estoque", "v1/posicaoestoque"],
   "v1/produtos": ["v1/produtos", "v1/produto", "v1/cadastroprodutos"],
 };
 
@@ -245,6 +244,93 @@ function cacheKey(endpoint, params) {
   return endpoint + "::" + JSON.stringify(params);
 }
 
+/* ------------------------------------------------------------------------
+   ESTOQUE — a DAPIC não tem um endpoint de listagem de estoque; o saldo por
+   grade (cor/tamanho) só vem no detalhe de cada produto (v1/produtos/{id}).
+   Com ~550 produtos ativos, buscar todos de uma vez estouraria o timeout da
+   function. Por isso: (1) cacheia a lista "enxuta" de produtos (id+nome) por
+   mais tempo, já que muda pouco; (2) o front busca o estoque em lotes
+   pequenos (endpoint=estoque-lote&offset=&limite=), cada lote buscando os
+   detalhes em paralelo (com limite de concorrência) só daquela fatia.
+   ------------------------------------------------------------------------ */
+
+const CATALOGO_CACHE_TTL_MS = 5 * 60 * 1000; // 5 min — catálogo muda pouco
+let catalogoCache = { at: 0, produtos: null };
+
+async function getCatalogoProdutos() {
+  if (catalogoCache.produtos && Date.now() - catalogoCache.at < CATALOGO_CACHE_TTL_MS) {
+    return catalogoCache.produtos;
+  }
+  const { dados } = await fetchAllPagesForPath("v1/produtos", {
+    TipoProduto: "1",
+    Status: "Ativo",
+  });
+  catalogoCache = { at: Date.now(), produtos: dados };
+  return dados;
+}
+
+async function fetchComLimite(items, limite, worker) {
+  const resultados = new Array(items.length);
+  let indice = 0;
+  async function runWorker() {
+    while (indice < items.length) {
+      const meu = indice++;
+      resultados[meu] = await worker(items[meu], meu);
+    }
+  }
+  const workers = Array.from({ length: Math.min(limite, items.length) }, runWorker);
+  await Promise.all(workers);
+  return resultados;
+}
+
+async function fetchProdutoDetalhe(id, token) {
+  const url = `${DAPIC_BASE}/v1/produtos/${id}`;
+  try {
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function handleEstoqueLote(qs) {
+  const offset = Math.max(0, Number(qs.offset) || 0);
+  const limite = Math.min(120, Math.max(1, Number(qs.limite) || 80));
+
+  const catalogo = await getCatalogoProdutos();
+  const fatia = catalogo.slice(offset, offset + limite);
+  const token = await getToken();
+
+  const detalhes = await fetchComLimite(fatia, 15, (item) => fetchProdutoDetalhe(item.Id, token));
+
+  const produtos = detalhes
+    .map((d, i) => {
+      if (!d) return null;
+      const grades = Array.isArray(d.GradesProdutos) ? d.GradesProdutos : [];
+      const estoqueTotal = grades.reduce((soma, g) => soma + (Number(g.Estoque) || 0), 0);
+      return {
+        id: d.Id ?? fatia[i].Id,
+        referencia: d.Referencia ?? fatia[i].Referencia,
+        nome: d.DescricaoFabrica ?? fatia[i].DescricaoFabrica,
+        dataCadastro: d.DataCadastro ?? fatia[i].DataCadastro,
+        estoqueTotal,
+        grades: grades.map((g) => ({
+          cor: g.Cor, tamanho: g.Tamanho, estoque: Number(g.Estoque) || 0,
+        })),
+      };
+    })
+    .filter(Boolean);
+
+  return {
+    produtos,
+    totalProdutos: catalogo.length,
+    offset,
+    limite,
+    proximoOffset: offset + limite < catalogo.length ? offset + limite : null,
+  };
+}
+
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") {
     return { statusCode: 204, headers: CORS_HEADERS, body: "" };
@@ -304,6 +390,16 @@ exports.handler = async (event) => {
   }
 
   const endpoint = qs.endpoint;
+
+  // Estoque é buscado em lotes (ver comentário acima de handleEstoqueLote).
+  if (endpoint === "estoque-lote") {
+    try {
+      const body = await handleEstoqueLote(qs);
+      return jsonResponse(200, body);
+    } catch (err) {
+      return jsonResponse(502, { erro: err.message || "Erro ao buscar lote de estoque." });
+    }
+  }
 
   if (!endpoint || !ENDPOINT_VARIANTS[endpoint]) {
     return jsonResponse(400, {

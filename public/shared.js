@@ -72,6 +72,55 @@ async function apiGet(endpoint, params = {}) {
   return json.dados || [];
 }
 
+// A DAPIC não tem endpoint de listagem de estoque — o saldo por grade só vem
+// no detalhe de cada produto (v1/produtos/{id}), e o catálogo tem ~550 itens
+// ativos. Por isso buscamos em lotes (endpoint=estoque-lote), com o servidor
+// paralelizando os detalhes de cada lote. onProgress(carregados, total) é
+// opcional, para mostrar uma barra de progresso.
+async function fetchEstoqueCompleto(onProgress) {
+  let offset = 0;
+  let total = null;
+  const produtos = [];
+  do {
+    const json = await apiGetRaw("estoque-lote", { offset, limite: 100 });
+    produtos.push(...(json.produtos || []));
+    total = json.totalProdutos ?? produtos.length;
+    offset = json.proximoOffset;
+    if (onProgress) onProgress(produtos.length, total);
+  } while (offset !== null && offset !== undefined);
+  return produtos;
+}
+
+// Como apiGet() extrai `json.dados`, usamos apiGetRaw p/ endpoints compostos
+// (como estoque-lote) que devolvem um formato próprio, não {dados: [...]}.
+async function apiGetRaw(endpoint, params = {}) {
+  const url = new URL(API_BASE, window.location.origin);
+  url.searchParams.set("endpoint", endpoint);
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, v);
+  });
+  const res = await fetch(url.toString());
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(json.erro || `Erro ao consultar ${endpoint} (HTTP ${res.status})`);
+  }
+  return json;
+}
+
+// Converte a lista de produtos-com-grades (de fetchEstoqueCompleto) para o
+// mesmo formato de mapa ref -> {ref, nome, quantidade, dataEntrada} usado
+// pelo resto do dashboard. Não há data de entrada por grade na DAPIC, então
+// dataEntrada fica null aqui de propósito — a "idade" do estoque parado é
+// calculada a partir da última venda (ver aggregateVendasPorProduto).
+function estoqueLoteParaMapa(produtosComGrades) {
+  const map = new Map();
+  for (const p of produtosComGrades) {
+    const ref = String(p.referencia ?? "—");
+    map.set(ref, { ref, nome: p.nome || "Produto sem nome", quantidade: p.estoqueTotal || 0, dataEntrada: null });
+  }
+  return map;
+}
+
 function dateRangeParams(days) {
   const hoje = new Date();
   const inicio = new Date();
@@ -204,11 +253,12 @@ function buildProdutoCatalog(registros) {
 function aggregateVendasPorProduto(linhas) {
   const map = new Map();
   for (const l of linhas) {
-    if (!map.has(l.ref)) map.set(l.ref, { ref: l.ref, nome: l.nome, quantidade: 0, valorTotal: 0 });
+    if (!map.has(l.ref)) map.set(l.ref, { ref: l.ref, nome: l.nome, quantidade: 0, valorTotal: 0, ultimaVenda: null });
     const agg = map.get(l.ref);
     agg.quantidade += l.quantidade;
     agg.valorTotal += l.valorTotal;
     if (l.nome && l.nome !== "Produto sem nome") agg.nome = l.nome;
+    if (l.data && (!agg.ultimaVenda || l.data > agg.ultimaVenda)) agg.ultimaVenda = l.data;
   }
   return map;
 }

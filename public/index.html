@@ -34,7 +34,7 @@
       <div class="kpi"><div class="label">Produtos analisados</div><div class="value" id="kpi-total">—</div></div>
       <div class="kpi"><div class="label">Sell-through médio</div><div class="value" id="kpi-st">—</div></div>
       <div class="kpi"><div class="label">Champions (ST ≥ 70%)</div><div class="value good" id="kpi-champions">—</div></div>
-      <div class="kpi"><div class="label">Dead stock (&gt;90 dias)</div><div class="value danger" id="kpi-dead">—</div><div class="sub" id="kpi-dead-sub"></div></div>
+      <div class="kpi"><div class="label" id="kpi-dead-label">Dead stock (sem venda no período)</div><div class="value danger" id="kpi-dead">—</div><div class="sub" id="kpi-dead-sub"></div></div>
       <div class="kpi"><div class="label">Ticket médio (por peça)</div><div class="value" id="kpi-ticket">—</div></div>
     </div>
 
@@ -71,7 +71,7 @@
       <div class="panel">
         <div class="panel-header">
           <h2>Dead stock</h2>
-          <span class="muted" style="font-size:11.5px">estoque parado &gt; 60 dias</span>
+          <span class="muted" style="font-size:11.5px" id="dead-stock-sub">sem vendas no período selecionado</span>
         </div>
         <div class="table-wrap">
           <table>
@@ -134,7 +134,8 @@ function stBar(pct) {
 
 function ageBadge(days) {
   if (days === null) return `<span class="badge neutral">—</span>`;
-  return `<span class="badge ${ageClass(days)}">${days}d</span>`;
+  const texto = days >= periodDays ? `sem venda ≥${days}d` : `${days}d`;
+  return `<span class="badge ${ageClass(days)}">${texto}</span>`;
 }
 
 function renderRanking(data) {
@@ -191,16 +192,19 @@ async function loadAll() {
 
   try {
     const periodo = dateRangeParams(periodDays);
-    const [vendaspdv, pedidosvendas, estoques, produtos] = await Promise.all([
+    const [vendaspdv, pedidosvendas, produtos] = await Promise.all([
       apiGet("v1/vendaspdv", periodo),
       apiGet("v1/pedidosvendas", periodo),
-      apiGet("v1/estoques", {}),
       apiGet("v1/produtos", {}),
     ]);
 
+    const produtosComGrades = await fetchEstoqueCompleto((carregados, total) => {
+      document.getElementById("footer-status").textContent = `Buscando estoque… ${carregados}/${total}`;
+    });
+    const estoquePorProduto = estoqueLoteParaMapa(produtosComGrades);
+
     const linhasVenda = [...flattenVendas(vendaspdv), ...flattenVendas(pedidosvendas)];
     const vendasPorProduto = aggregateVendasPorProduto(linhasVenda);
-    const estoquePorProduto = aggregateEstoquePorProduto(normalizeEstoque(estoques));
     const catalogo = buildProdutoCatalog(produtos);
 
     const refs = new Set([...vendasPorProduto.keys(), ...estoquePorProduto.keys()]);
@@ -208,14 +212,16 @@ async function loadAll() {
     let totalVendido = 0, totalFaturado = 0;
 
     for (const ref of refs) {
-      const venda = vendasPorProduto.get(ref) || { quantidade: 0, valorTotal: 0, nome: null };
-      const estoque = estoquePorProduto.get(ref) || { quantidade: 0, dataEntrada: null };
+      const venda = vendasPorProduto.get(ref) || { quantidade: 0, valorTotal: 0, nome: null, ultimaVenda: null };
+      const estoque = estoquePorProduto.get(ref) || { quantidade: 0 };
       const cat = catalogo.get(ref);
       const nome = venda.nome || estoque.nome || cat?.nome || "Produto sem nome";
       const st = venda.quantidade + estoque.quantidade > 0
         ? (venda.quantidade / (venda.quantidade + estoque.quantidade)) * 100
         : 0;
-      const idade = estoque.dataEntrada ? daysAgo(estoque.dataEntrada) : null;
+      // "Idade" = dias desde a última venda dentro do período carregado. Se não
+      // vendeu nada no período, tratamos como "sem venda há pelo menos periodDays".
+      const idade = venda.ultimaVenda ? daysAgo(venda.ultimaVenda) : (estoque.quantidade > 0 ? periodDays : null);
       const ticket = venda.quantidade > 0 ? venda.valorTotal / venda.quantidade : 0;
 
       totalVendido += venda.quantidade;
@@ -231,13 +237,14 @@ async function loadAll() {
     rankingData = linhas;
     renderRanking(rankingData);
 
+    // Dead stock: tem estoque e não vendeu nada no período selecionado.
     const dead = linhas
-      .filter((d) => d.estoque > 0 && d.idade !== null && d.idade > 60)
-      .sort((a, b) => b.idade - a.idade);
+      .filter((d) => d.estoque > 0 && d.quantidade === 0)
+      .sort((a, b) => b.estoque - a.estoque);
     deadStockData = dead;
     renderDeadStock(dead);
+    document.getElementById("dead-stock-sub").textContent = `sem vendas nos últimos ${periodDays} dias`;
 
-    const deadOver90 = dead.filter((d) => d.idade > 90);
     const champions = linhas.filter((d) => d.st >= 70);
     const stMedio = linhas.length ? linhas.reduce((s, d) => s + d.st, 0) / linhas.length : 0;
     const ticketMedio = totalVendido > 0 ? totalFaturado / totalVendido : 0;
@@ -247,14 +254,14 @@ async function loadAll() {
     stEl.textContent = fmtPct(stMedio);
     stEl.className = "value " + stClass(stMedio);
     document.getElementById("kpi-champions").textContent = fmtInt(champions.length);
-    document.getElementById("kpi-dead").textContent = fmtInt(deadOver90.length) + " SKUs";
+    document.getElementById("kpi-dead").textContent = fmtInt(dead.length) + " SKUs";
     document.getElementById("kpi-dead-sub").textContent =
-      fmtInt(deadOver90.reduce((s, d) => s + d.quantidade, 0)) + " peças";
+      fmtInt(dead.reduce((s, d) => s + d.quantidade, 0)) + " peças";
     document.getElementById("kpi-ticket").textContent = fmtBRLCents(ticketMedio);
 
     setConnStatus("ok", "conectado");
     document.getElementById("footer-status").textContent =
-      `${linhas.length} produtos · ${fmtInt(vendaspdv.length + pedidosvendas.length)} vendas no período`;
+      `${linhas.length} produtos · ${fmtInt(vendaspdv.length + pedidosvendas.length)} vendas no período · ${produtosComGrades.length} SKUs c/ estoque`;
     setLastUpdate();
     document.getElementById("last-update-footer").textContent = document.getElementById("last-update").textContent;
   } catch (err) {

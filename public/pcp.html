@@ -236,15 +236,18 @@ async function loadAll() {
     const inicioHistorico = new Date();
     inicioHistorico.setMonth(inicioHistorico.getMonth() - 13);
 
-    const [vendaspdv, pedidosvendas, estoques, ordensRaw] = await Promise.all([
+    const [vendaspdv, pedidosvendas, ordensRaw] = await Promise.all([
       apiGet("v1/vendaspdv", { DataInicial: isoDate(inicioHistorico), DataFinal: isoDate(fimHistorico) }),
       apiGet("v1/pedidosvendas", { DataInicial: isoDate(inicioHistorico), DataFinal: isoDate(fimHistorico) }),
-      apiGet("v1/estoques", {}),
       apiGet("v1/ordensproducao", {}),
     ]);
 
+    const produtosComGrades = await fetchEstoqueCompleto((carregados, total) => {
+      document.getElementById("footer-status").textContent = `Buscando estoque… ${carregados}/${total}`;
+    });
+    const estoquePorProduto = estoqueLoteParaMapa(produtosComGrades);
+
     const linhas = [...flattenVendas(vendaspdv), ...flattenVendas(pedidosvendas)].filter((l) => l.data);
-    const estoquePorProduto = aggregateEstoquePorProduto(normalizeEstoque(estoques));
     const ordens = normalizeOrdens(ordensRaw);
 
     // agrupa por produto: total últimos 12 meses (p/ média) e total no mesmo mês do ano anterior
