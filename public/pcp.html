@@ -239,7 +239,7 @@ async function loadAll() {
     const [vendaspdv, pedidosvendas, ordensRaw] = await Promise.all([
       apiGet("v1/vendaspdv", { DataInicial: isoDate(inicioHistorico), DataFinal: isoDate(fimHistorico) }),
       apiGet("v1/pedidosvendas", { DataInicial: isoDate(inicioHistorico), DataFinal: isoDate(fimHistorico) }),
-      apiGet("v1/ordensproducao", {}),
+      apiGet("v1/ordensproducao", { DataInicial: isoDate(inicioHistorico), DataFinal: isoDate(fimHistorico) }),
     ]);
 
     const produtosComGrades = await fetchEstoqueCompleto((carregados, total) => {
