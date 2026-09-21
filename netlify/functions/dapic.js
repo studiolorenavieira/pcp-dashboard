@@ -10,7 +10,17 @@
 //
 // Uso: GET /api/dapic?endpoint=v1/vendaspdv&DataInicial=2026-01-01&DataFinal=2026-09-17
 
+const { getStore } = require("@netlify/blobs");
+
 const DAPIC_BASE = "https://api.dapic.app";
+
+// A DAPIC aplica rate limit de 60 requisições/60s POR EMPRESA (compartilhado
+// entre todas as invocações desta function, não só dentro de uma). Por isso
+// o estoque (que exige 1 chamada por produto) é cacheado de forma persistente
+// no Netlify Blobs — sem isso, sincronizar ~550 produtos estouraria o limite
+// e levaria minutos a cada carregamento da tela.
+const ESTOQUE_CACHE_TTL_MS = 60 * 60 * 1000; // 1h — estoque de fábrica não muda a cada minuto
+const ESTOQUE_LIVE_DELAY_MS = 1100; // ritmo seguro: ~54 req/min, deixando folga p/ resto do site
 
 // Endpoints permitidos (whitelist) e variações a tentar em caso de 404.
 // A primeira entrada de cada array é o endpoint "canônico" do spec.
@@ -246,15 +256,17 @@ function cacheKey(endpoint, params) {
 
 /* ------------------------------------------------------------------------
    ESTOQUE — a DAPIC não tem um endpoint de listagem de estoque; o saldo por
-   grade (cor/tamanho) só vem no detalhe de cada produto (v1/produtos/{id}).
-   Com ~550 produtos ativos, buscar todos de uma vez estouraria o timeout da
-   function. Por isso: (1) cacheia a lista "enxuta" de produtos (id+nome) por
-   mais tempo, já que muda pouco; (2) o front busca o estoque em lotes
-   pequenos (endpoint=estoque-lote&offset=&limite=), cada lote buscando os
-   detalhes em paralelo (com limite de concorrência) só daquela fatia.
+   grade (cor/tamanho) só vem no detalhe de cada produto (v1/produtos/{id}),
+   e com ~550 produtos ativos + rate limit de 60 req/min por empresa, buscar
+   tudo ao vivo a cada carregamento é inviável (estouraria o limite e levaria
+   minutos). Solução: cache persistente no Netlify Blobs (sobrevive entre
+   invocações/cold starts) com TTL de 1h. O front busca em lotes
+   (endpoint=estoque-lote&offset=&limite=); cada lote resolve o que já está
+   em cache instantaneamente e busca ao vivo (com ritmo seguro) só o que
+   faltar, dentro de um orçamento de tempo por chamada.
    ------------------------------------------------------------------------ */
 
-const CATALOGO_CACHE_TTL_MS = 5 * 60 * 1000; // 5 min — catálogo muda pouco
+const CATALOGO_CACHE_TTL_MS = 5 * 60 * 1000; // 5 min — catálogo (lista) muda pouco
 let catalogoCache = { at: 0, produtos: null };
 
 async function getCatalogoProdutos() {
@@ -269,65 +281,81 @@ async function getCatalogoProdutos() {
   return dados;
 }
 
-async function fetchComLimite(items, limite, worker) {
-  const resultados = new Array(items.length);
-  let indice = 0;
-  async function runWorker() {
-    while (indice < items.length) {
-      const meu = indice++;
-      resultados[meu] = await worker(items[meu], meu);
-    }
-  }
-  const workers = Array.from({ length: Math.min(limite, items.length) }, runWorker);
-  await Promise.all(workers);
-  return resultados;
+function getEstoqueStore() {
+  return getStore({ name: "pcp-estoque", consistency: "strong" });
 }
 
-async function fetchProdutoDetalhe(id, token) {
+function normalizaDetalhe(d, fallback) {
+  const grades = Array.isArray(d.GradesProdutos) ? d.GradesProdutos : [];
+  const estoqueTotal = grades.reduce((soma, g) => soma + (Number(g.Estoque) || 0), 0);
+  return {
+    id: d.Id ?? fallback.Id,
+    referencia: d.Referencia ?? fallback.Referencia,
+    nome: d.DescricaoFabrica ?? fallback.DescricaoFabrica,
+    dataCadastro: d.DataCadastro ?? fallback.DataCadastro,
+    estoqueTotal,
+    grades: grades.map((g) => ({ cor: g.Cor, tamanho: g.Tamanho, estoque: Number(g.Estoque) || 0 })),
+    atualizadoEm: Date.now(),
+  };
+}
+
+async function fetchProdutoDetalheVivo(id, token) {
   const url = `${DAPIC_BASE}/v1/produtos/${id}`;
-  try {
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-    if (!res.ok) return null;
-    return await res.json();
-  } catch {
-    return null;
-  }
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) return null;
+  return await res.json();
 }
 
+// Processa a fatia [offset, offset+limite) do catálogo: resolve o que já
+// está em cache (rápido) e busca ao vivo, com ritmo seguro, o que faltar —
+// mas para de buscar ao vivo se o orçamento de tempo da invocação estourar,
+// devolvendo um "proximoOffset" que aponta pro primeiro item não resolvido
+// (o front continua o loop a partir dali na próxima chamada).
 async function handleEstoqueLote(qs) {
   const offset = Math.max(0, Number(qs.offset) || 0);
-  const limite = Math.min(120, Math.max(1, Number(qs.limite) || 80));
+  const limite = Math.min(150, Math.max(1, Number(qs.limite) || 100));
+  const ORCAMENTO_MS = 8000; // margem de segurança sob o timeout de 10s do Netlify
 
   const catalogo = await getCatalogoProdutos();
   const fatia = catalogo.slice(offset, offset + limite);
-  const token = await getToken();
+  const store = getEstoqueStore();
+  const inicio = Date.now();
 
-  const detalhes = await fetchComLimite(fatia, 15, (item) => fetchProdutoDetalhe(item.Id, token));
+  let token = null;
+  let ultimaChamadaViva = 0;
+  const produtos = [];
+  let processados = 0;
 
-  const produtos = detalhes
-    .map((d, i) => {
-      if (!d) return null;
-      const grades = Array.isArray(d.GradesProdutos) ? d.GradesProdutos : [];
-      const estoqueTotal = grades.reduce((soma, g) => soma + (Number(g.Estoque) || 0), 0);
-      return {
-        id: d.Id ?? fatia[i].Id,
-        referencia: d.Referencia ?? fatia[i].Referencia,
-        nome: d.DescricaoFabrica ?? fatia[i].DescricaoFabrica,
-        dataCadastro: d.DataCadastro ?? fatia[i].DataCadastro,
-        estoqueTotal,
-        grades: grades.map((g) => ({
-          cor: g.Cor, tamanho: g.Tamanho, estoque: Number(g.Estoque) || 0,
-        })),
-      };
-    })
-    .filter(Boolean);
+  for (const item of fatia) {
+    const chaveCache = `produto-${item.Id}`;
+    const cache = await store.get(chaveCache, { type: "json" }).catch(() => null);
+    if (cache && Date.now() - cache.atualizadoEm < ESTOQUE_CACHE_TTL_MS) {
+      produtos.push(cache);
+      processados++;
+      continue;
+    }
+
+    if (Date.now() - inicio > ORCAMENTO_MS) break; // sem tempo pra mais buscas ao vivo nesta invocação
+
+    if (!token) token = await getToken();
+    const espera = ESTOQUE_LIVE_DELAY_MS - (Date.now() - ultimaChamadaViva);
+    if (ultimaChamadaViva && espera > 0) await new Promise((r) => setTimeout(r, espera));
+    ultimaChamadaViva = Date.now();
+
+    const detalheBruto = await fetchProdutoDetalheVivo(item.Id, token);
+    processados++;
+    if (!detalheBruto) continue;
+    const normalizado = normalizaDetalhe(detalheBruto, item);
+    produtos.push(normalizado);
+    await store.setJSON(chaveCache, normalizado).catch(() => {});
+  }
 
   return {
     produtos,
     totalProdutos: catalogo.length,
     offset,
     limite,
-    proximoOffset: offset + limite < catalogo.length ? offset + limite : null,
+    proximoOffset: offset + processados < catalogo.length ? offset + processados : null,
   };
 }
 
