@@ -34,7 +34,7 @@ function getField(obj, candidates) {
 const FIELD_ALIASES = {
   produtoRef: ["Referencia", "ReferenciaProduto", "Codigo", "CodigoProduto", "Sku", "SKU", "RefProduto"],
   produtoNome: ["Nome", "NomeProduto", "Descricao", "DescricaoProduto", "Produto"],
-  quantidade: ["Quantidade", "Qtd", "QtdVendida", "QtdEstoque", "Saldo", "SaldoEstoque"],
+  quantidade: ["Quantidade", "Qtd", "QtdVendida", "QtdEstoque", "Saldo", "SaldoEstoque", "QuantidadeTotal", "QuantidadeFinalizada"],
   valorTotal: ["ValorTotal", "ValorLiquido", "ValorItem", "Total", "ValorVenda", "ValorFaturado"],
   data: ["DataVenda", "Data", "DataEmissao", "DataPedido", "DataFatura", "DataMovimentacao"],
   itensArray: ["Itens", "ItensVenda", "ItensPedido", "Produtos", "ItensFatura"],
@@ -59,7 +59,8 @@ async function apiGet(endpoint, params = {}) {
   Object.entries(params).forEach(([k, v]) => {
     if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, v);
   });
-const res = await fetch(url.toString(), { headers: { Authorization: `Bearer ${SUPABASE_ANON_KEY}`, apikey: SUPABASE_ANON_KEY } });  const json = await res.json().catch(() => ({}));
+  const res = await fetch(url.toString(), { headers: { Authorization: `Bearer ${SUPABASE_ANON_KEY}`, apikey: SUPABASE_ANON_KEY } });
+  const json = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new Error(json.erro || `Erro ao consultar ${endpoint} (HTTP ${res.status})`);
   }
@@ -98,7 +99,8 @@ async function apiGetRaw(endpoint, params = {}) {
   Object.entries(params).forEach(([k, v]) => {
     if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, v);
   });
-const res = await fetch(url.toString(), { headers: { Authorization: `Bearer ${SUPABASE_ANON_KEY}`, apikey: SUPABASE_ANON_KEY } });  const json = await res.json().catch(() => ({}));
+  const res = await fetch(url.toString(), { headers: { Authorization: `Bearer ${SUPABASE_ANON_KEY}`, apikey: SUPABASE_ANON_KEY } });
+  const json = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new Error(json.erro || `Erro ao consultar ${endpoint} (HTTP ${res.status})`);
   }
@@ -277,10 +279,17 @@ function aggregateEstoquePorProduto(estoqueNorm) {
   return map;
 }
 
+// NOTA: a DAPIC nao retorna nome/SKU de produto em v1/ordensproducao (nem na
+// listagem, nem no detalhe por Id) — confirmado testando os 501 registros
+// ativos: nenhum tem produtoNome, ReferenciaExterna ou Observacao preenchidos,
+// e a "Referencia" da ordem e um numero de documento (ex: 250424140115NL),
+// nao o codigo do produto no catalogo. Por isso `nome` fica null aqui de
+// proposito, e a tela de Producao usa o numero da ordem (ref) como
+// identificador principal em vez de tentar mostrar um nome inexistente.
 function normalizeOrdens(registros) {
   return registros.map((reg) => ({
     ref: String(f(reg, "produtoRef") ?? "—"),
-    nome: f(reg, "produtoNome") ?? "Produto sem nome",
+    nome: f(reg, "produtoNome") ?? null,
     quantidade: Number(f(reg, "quantidade")) || 0,
     tipo: (f(reg, "tipoOrdem") || "").toString().toUpperCase().includes("CAPS") ? "CAPSULA" : "REPOSICAO",
     status: (f(reg, "status") || "").toString(),
