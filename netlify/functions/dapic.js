@@ -83,9 +83,15 @@ async function login() {
   }
 
   const data = await res.json();
-  const bearer = data.Token || data.token;
+  const bearer =
+    data.Token || data.token || data.AccessToken || data.accessToken ||
+    data.Bearer || data.bearer || data.TokenAcesso || data.tokenAcesso ||
+    data.TokenSessao || data.Authorization;
   if (!bearer) {
-    throw new Error("Resposta de login da DAPIC não trouxe um Token.");
+    // Mostra a resposta crua para descobrirmos o nome real do campo.
+    throw new Error(
+      "Resposta de login da DAPIC não trouxe um Token. Resposta crua: " + JSON.stringify(data)
+    );
   }
 
   tokenCache = {
