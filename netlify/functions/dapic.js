@@ -56,6 +56,14 @@ function parseValidade(dataValidade) {
   return Date.now() + 5 * 60 * 1000;
 }
 
+function parseExpiresIn(expiresInSeconds) {
+  // DAPIC retorna "expires_in" como duração em segundos (padrão OAuth2),
+  // não uma data. Ex.: "86400" = 24h a partir de agora.
+  const n = Number(expiresInSeconds);
+  if (!Number.isNaN(n) && n > 0) return Date.now() + n * 1000;
+  return Date.now() + 5 * 60 * 1000;
+}
+
 async function login() {
   const identificador = process.env.DAPIC_IDENTIFICADOR;
   const token = process.env.DAPIC_TOKEN;
@@ -83,10 +91,11 @@ async function login() {
   }
 
   const data = await res.json();
+  // A DAPIC usa o formato padrão OAuth2: access_token / expires_in / token_type.
   const bearer =
-    data.Token || data.token || data.AccessToken || data.accessToken ||
-    data.Bearer || data.bearer || data.TokenAcesso || data.tokenAcesso ||
-    data.TokenSessao || data.Authorization;
+    data.access_token || data.Token || data.token || data.AccessToken ||
+    data.accessToken || data.Bearer || data.bearer || data.TokenAcesso ||
+    data.tokenAcesso || data.TokenSessao || data.Authorization;
   if (!bearer) {
     // Mostra a resposta crua para descobrirmos o nome real do campo.
     throw new Error(
@@ -94,9 +103,13 @@ async function login() {
     );
   }
 
+  const expiresAt = data.expires_in
+    ? parseExpiresIn(data.expires_in)
+    : parseValidade(data.DataValidade || data.dataValidade);
+
   tokenCache = {
     token: bearer,
-    expiresAt: parseValidade(data.DataValidade || data.dataValidade) - TOKEN_SAFETY_MARGIN_MS,
+    expiresAt: expiresAt - TOKEN_SAFETY_MARGIN_MS,
   };
 
   return tokenCache.token;
