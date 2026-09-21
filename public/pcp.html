@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Sugestão de PCP · PCP Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="shared.css" />
+<style>
+  .sugestao-cell { font-weight: 700; font-size: 14px; color: var(--accent); }
+  .capsula-form {
+    display: flex; gap: 8px; padding: 14px 18px; border-bottom: 1px solid var(--border);
+    flex-wrap: wrap; align-items: center; background: var(--surface2);
+  }
+  .capsula-form input { flex: 1; min-width: 120px; }
+  .capsula-form button { flex-shrink: 0; }
+  .del-btn {
+    background: transparent; border: 1px solid var(--border); color: var(--danger);
+    padding: 3px 9px; font-size: 11px; border-radius: 6px;
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <div id="sidebar-root"></div>
+
+  <main class="main">
+    <div class="page-header">
+      <div>
+        <h1>Sugestão de PCP</h1>
+        <div class="desc">Projeção de produção por produto — histórico + sazonalidade − estoque − em produção</div>
+      </div>
+      <div class="controls">
+        <label class="muted" style="font-size:12px">Mês alvo</label>
+        <input type="month" id="mes-alvo" />
+        <label class="muted" style="font-size:12px">Crescimento (%)</label>
+        <input type="number" id="fator-crescimento" value="10" step="5" style="width:70px" />
+        <button id="btn-refresh" class="primary">↻ Recalcular</button>
+      </div>
+    </div>
+
+    <div class="tabs">
+      <button class="active" data-tab="reposicao">Reposição</button>
+      <button data-tab="capsula">Cápsula</button>
+    </div>
+
+    <div id="tab-reposicao">
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Reposição — champions com histórico</h2>
+          <button id="btn-export-reposicao">⬇ Exportar CSV</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th data-key="ref">Ref</th>
+                <th data-key="nome">Produto</th>
+                <th data-key="mediaMensal" class="num">Média mensal</th>
+                <th data-key="mesAnoAnterior" class="num">Mesmo mês (ano ant.)</th>
+                <th data-key="estoqueAtual" class="num">Estoque atual</th>
+                <th data-key="emProducao" class="num">Em produção</th>
+                <th data-key="sugestao" class="num">Sugestão</th>
+              </tr>
+            </thead>
+            <tbody id="reposicao-body"><tr><td colspan="7" class="empty-state">Carregando…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div id="tab-capsula" style="display:none">
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Cápsula — novos modelos (sem histórico)</h2>
+          <button id="btn-export-capsula">⬇ Exportar CSV</button>
+        </div>
+        <div class="capsula-form">
+          <input type="text" id="cap-ref" placeholder="Referência" />
+          <input type="text" id="cap-nome" placeholder="Nome do modelo" />
+          <input type="number" id="cap-qtd" placeholder="Qtd sugerida" min="0" />
+          <button id="cap-add" class="primary">+ Adicionar</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Ref</th>
+                <th>Produto</th>
+                <th class="num">Sugestão (manual)</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="capsula-body"><tr><td colspan="4" class="empty-state">Nenhum modelo adicionado ainda.</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer-note">
+      <span id="footer-status">—</span>
+      <span id="last-update-footer"></span>
+    </div>
+  </main>
+</div>
+
+<script src="shared.js"></script>
+<script>
+renderSidebar("pcp.html");
+
+const mesAlvoInput = document.getElementById("mes-alvo");
+const now = new Date();
+const proximoMes = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+mesAlvoInput.value = monthKey(proximoMes);
+
+let reposicaoData = [];
+const CAPSULA_KEY = "pcp_capsula_items";
+
+function loadCapsula() {
+  try { return JSON.parse(localStorage.getItem(CAPSULA_KEY) || "[]"); } catch { return []; }
+}
+function saveCapsula(items) {
+  localStorage.setItem(CAPSULA_KEY, JSON.stringify(items));
+}
+
+document.querySelectorAll(".tabs button").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".tabs button").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    document.getElementById("tab-reposicao").style.display = btn.dataset.tab === "reposicao" ? "" : "none";
+    document.getElementById("tab-capsula").style.display = btn.dataset.tab === "capsula" ? "" : "none";
+  });
+});
+
+document.getElementById("btn-refresh").addEventListener("click", loadAll);
+document.getElementById("mes-alvo").addEventListener("change", loadAll);
+document.getElementById("fator-crescimento").addEventListener("change", () => renderReposicao(reposicaoData));
+
+document.getElementById("cap-add").addEventListener("click", () => {
+  const ref = document.getElementById("cap-ref").value.trim();
+  const nome = document.getElementById("cap-nome").value.trim();
+  const qtd = Number(document.getElementById("cap-qtd").value) || 0;
+  if (!ref || !nome) return;
+  const items = loadCapsula();
+  items.push({ ref, nome, qtd });
+  saveCapsula(items);
+  document.getElementById("cap-ref").value = "";
+  document.getElementById("cap-nome").value = "";
+  document.getElementById("cap-qtd").value = "";
+  renderCapsula();
+});
+
+function renderCapsula() {
+  const items = loadCapsula();
+  const body = document.getElementById("capsula-body");
+  if (!items.length) {
+    body.innerHTML = `<tr><td colspan="4" class="empty-state">Nenhum modelo adicionado ainda.</td></tr>`;
+    return;
+  }
+  body.innerHTML = items
+    .map(
+      (it, idx) => `
+      <tr>
+        <td class="mono">${escapeHTML(it.ref)}</td>
+        <td>${escapeHTML(it.nome)}</td>
+        <td class="num sugestao-cell">${fmtInt(it.qtd)}</td>
+        <td><button class="del-btn" data-idx="${idx}">remover</button></td>
+      </tr>`
+    )
+    .join("");
+  body.querySelectorAll(".del-btn").forEach((b) =>
+    b.addEventListener("click", () => {
+      const items2 = loadCapsula();
+      items2.splice(Number(b.dataset.idx), 1);
+      saveCapsula(items2);
+      renderCapsula();
+    })
+  );
+}
+
+document.getElementById("btn-export-capsula").addEventListener("click", () => {
+  const items = loadCapsula();
+  exportCSV("pcp_capsula.csv", ["Referencia", "Nome", "Sugestao"], items.map((i) => [i.ref, i.nome, i.qtd]));
+});
+
+document.getElementById("btn-export-reposicao").addEventListener("click", () => {
+  exportCSV(
+    "pcp_reposicao.csv",
+    ["Referencia", "Nome", "MediaMensal", "MesmoMesAnoAnterior", "EstoqueAtual", "EmProducao", "Sugestao"],
+    reposicaoData.map((d) => [d.ref, d.nome, Math.round(d.mediaMensal), d.mesAnoAnterior, d.estoqueAtual, d.emProducao, d.sugestao])
+  );
+});
+
+function renderReposicao(data) {
+  const fator = Number(document.getElementById("fator-crescimento").value) || 0;
+  const withSugestao = data.map((d) => {
+    const base = d.mesAnoAnterior > 0 ? d.mesAnoAnterior : d.mediaMensal;
+    const projecao = base * (1 + fator / 100);
+    const sugestao = Math.max(0, Math.round(projecao - d.estoqueAtual - d.emProducao));
+    return { ...d, sugestao };
+  });
+  reposicaoData = withSugestao;
+
+  const body = document.getElementById("reposicao-body");
+  if (!withSugestao.length) {
+    body.innerHTML = `<tr><td colspan="7" class="empty-state">Sem histórico de vendas suficiente no período consultado.</td></tr>`;
+    return;
+  }
+  const sorted = [...withSugestao].sort((a, b) => b.sugestao - a.sugestao);
+  body.innerHTML = sorted
+    .map(
+      (d) => `
+      <tr>
+        <td class="mono">${escapeHTML(d.ref)}</td>
+        <td>${escapeHTML(d.nome)}</td>
+        <td class="num mono">${fmtInt(d.mediaMensal)}</td>
+        <td class="num mono">${fmtInt(d.mesAnoAnterior)}</td>
+        <td class="num mono">${fmtInt(d.estoqueAtual)}</td>
+        <td class="num mono">${fmtInt(d.emProducao)}</td>
+        <td class="num sugestao-cell">${fmtInt(d.sugestao)}</td>
+      </tr>`
+    )
+    .join("");
+}
+
+async function loadAll() {
+  setConnStatus("loading", "atualizando…");
+  document.getElementById("footer-status").textContent = "Calculando sugestão de PCP…";
+  try {
+    const [ano, mes] = mesAlvoInput.value.split("-").map(Number);
+    const mesAlvoDate = new Date(ano, mes - 1, 1);
+    const mesAnoAnteriorKey = monthKey(new Date(ano - 1, mes - 1, 1));
+
+    const fimHistorico = new Date();
+    const inicioHistorico = new Date();
+    inicioHistorico.setMonth(inicioHistorico.getMonth() - 13);
+
+    const [vendaspdv, pedidosvendas, estoques, ordensRaw] = await Promise.all([
+      apiGet("v1/vendaspdv", { DataInicial: isoDate(inicioHistorico), DataFinal: isoDate(fimHistorico) }),
+      apiGet("v1/pedidosvendas", { DataInicial: isoDate(inicioHistorico), DataFinal: isoDate(fimHistorico) }),
+      apiGet("v1/estoques", {}),
+      apiGet("v1/ordensproducao", {}),
+    ]);
+
+    const linhas = [...flattenVendas(vendaspdv), ...flattenVendas(pedidosvendas)].filter((l) => l.data);
+    const estoquePorProduto = aggregateEstoquePorProduto(normalizeEstoque(estoques));
+    const ordens = normalizeOrdens(ordensRaw);
+
+    // agrupa por produto: total últimos 12 meses (p/ média) e total no mesmo mês do ano anterior
+    const porProduto = new Map();
+    for (const l of linhas) {
+      if (!porProduto.has(l.ref)) {
+        porProduto.set(l.ref, { ref: l.ref, nome: l.nome, total12m: 0, mesAnoAnterior: 0 });
+      }
+      const agg = porProduto.get(l.ref);
+      if (l.nome && l.nome !== "Produto sem nome") agg.nome = l.nome;
+
+      const mk = monthKey(l.data);
+      const dozeAtras = new Date(mesAlvoDate);
+      dozeAtras.setMonth(dozeAtras.getMonth() - 12);
+      if (l.data >= dozeAtras && l.data < mesAlvoDate) {
+        agg.total12m += l.quantidade;
+      }
+      if (mk === mesAnoAnteriorKey) {
+        agg.mesAnoAnterior += l.quantidade;
+      }
+    }
+
+    const emProducaoPorProduto = new Map();
+    for (const o of ordens) {
+      const concluida = /conclu|finaliz|encerr/.test(o.status.toLowerCase()) || !!o.dataConclusao;
+      if (concluida) continue;
+      emProducaoPorProduto.set(o.ref, (emProducaoPorProduto.get(o.ref) || 0) + o.quantidade);
+    }
+
+    const rows = [];
+    for (const [ref, agg] of porProduto) {
+      rows.push({
+        ref,
+        nome: agg.nome,
+        mediaMensal: agg.total12m / 12,
+        mesAnoAnterior: agg.mesAnoAnterior,
+        estoqueAtual: estoquePorProduto.get(ref)?.quantidade || 0,
+        emProducao: emProducaoPorProduto.get(ref) || 0,
+      });
+    }
+
+    renderReposicao(rows);
+    renderCapsula();
+
+    setConnStatus("ok", "conectado");
+    document.getElementById("footer-status").textContent = `${rows.length} produtos com histórico · alvo: ${monthLabel(monthKey(mesAlvoDate))}`;
+    setLastUpdate();
+    document.getElementById("last-update-footer").textContent = document.getElementById("last-update").textContent;
+  } catch (err) {
+    console.error(err);
+    setConnStatus("err", "erro na conexão");
+    document.getElementById("footer-status").textContent = "Erro: " + err.message;
+    document.getElementById("reposicao-body").innerHTML = `<tr><td colspan="7" class="empty-state">${escapeHTML(err.message)}</td></tr>`;
+  }
+}
+
+makeSortable(document.querySelector("#reposicao-body").closest("table").querySelector("thead"), () => reposicaoData, (sorted) => { reposicaoData = sorted; renderReposicaoSorted(sorted); });
+function renderReposicaoSorted(sorted) {
+  const body = document.getElementById("reposicao-body");
+  body.innerHTML = sorted
+    .map(
+      (d) => `
+      <tr>
+        <td class="mono">${escapeHTML(d.ref)}</td>
+        <td>${escapeHTML(d.nome)}</td>
+        <td class="num mono">${fmtInt(d.mediaMensal)}</td>
+        <td class="num mono">${fmtInt(d.mesAnoAnterior)}</td>
+        <td class="num mono">${fmtInt(d.estoqueAtual)}</td>
+        <td class="num mono">${fmtInt(d.emProducao)}</td>
+        <td class="num sugestao-cell">${fmtInt(d.sugestao)}</td>
+      </tr>`
+    )
+    .join("");
+}
+
+loadAll();
+</script>
+</body>
+</html>

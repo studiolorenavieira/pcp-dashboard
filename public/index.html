@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Sell-through & Ranking · PCP Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="shared.css" />
+</head>
+<body>
+<div class="app">
+  <div id="sidebar-root"></div>
+
+  <main class="main">
+    <div class="page-header">
+      <div>
+        <h1>Sell-through & Ranking</h1>
+        <div class="desc">Velocidade de venda por produto — cruzando vendas + estoque em tempo real</div>
+      </div>
+      <div class="controls">
+        <div class="seg" id="period-seg">
+          <button data-days="30">30d</button>
+          <button data-days="60">60d</button>
+          <button data-days="90" class="active">90d</button>
+          <button data-days="180">180d</button>
+          <button data-days="365">365d</button>
+        </div>
+        <button id="btn-refresh" class="primary">↻ Atualizar</button>
+      </div>
+    </div>
+
+    <div class="kpi-row" id="kpi-row">
+      <div class="kpi"><div class="label">Produtos analisados</div><div class="value" id="kpi-total">—</div></div>
+      <div class="kpi"><div class="label">Sell-through médio</div><div class="value" id="kpi-st">—</div></div>
+      <div class="kpi"><div class="label">Champions (ST ≥ 70%)</div><div class="value good" id="kpi-champions">—</div></div>
+      <div class="kpi"><div class="label">Dead stock (&gt;90 dias)</div><div class="value danger" id="kpi-dead">—</div><div class="sub" id="kpi-dead-sub"></div></div>
+      <div class="kpi"><div class="label">Ticket médio (por peça)</div><div class="value" id="kpi-ticket">—</div></div>
+    </div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Ranking de produtos</h2>
+          <div class="seg" id="filter-seg">
+            <button data-f="todos" class="active">Todos</button>
+            <button data-f="champions">Champions</button>
+            <button data-f="atencao">Atenção</button>
+            <button data-f="risco">Risco</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th data-key="pos">#</th>
+                <th data-key="ref">Referência</th>
+                <th data-key="nome">Produto</th>
+                <th data-key="st">Sell-through</th>
+                <th data-key="quantidade" class="num">Vendido</th>
+                <th data-key="estoque" class="num">Estoque</th>
+                <th data-key="idade">Idade estoque</th>
+                <th data-key="ticket" class="num">Ticket médio</th>
+              </tr>
+            </thead>
+            <tbody id="ranking-body"><tr><td colspan="8" class="empty-state">Carregando…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Dead stock</h2>
+          <span class="muted" style="font-size:11.5px">estoque parado &gt; 60 dias</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th data-key="ref">Ref</th>
+                <th data-key="nome">Produto</th>
+                <th data-key="quantidade" class="num">Qtd</th>
+                <th data-key="idade" class="num">Dias parado</th>
+                <th data-key="valorImobilizado" class="num">Valor imob.</th>
+              </tr>
+            </thead>
+            <tbody id="dead-body"><tr><td colspan="5" class="empty-state">Carregando…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer-note">
+      <span id="footer-status">—</span>
+      <span id="last-update-footer"></span>
+    </div>
+  </main>
+</div>
+
+<script src="shared.js"></script>
+<script>
+renderSidebar("index.html");
+
+let periodDays = 90;
+let currentFilter = "todos";
+let rankingData = [];
+let deadStockData = [];
+
+document.getElementById("period-seg").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-days]");
+  if (!btn) return;
+  document.querySelectorAll("#period-seg button").forEach((b) => b.classList.remove("active"));
+  btn.classList.add("active");
+  periodDays = Number(btn.dataset.days);
+  loadAll();
+});
+
+document.getElementById("filter-seg").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-f]");
+  if (!btn) return;
+  document.querySelectorAll("#filter-seg button").forEach((b) => b.classList.remove("active"));
+  btn.classList.add("active");
+  currentFilter = btn.dataset.f;
+  renderRanking(rankingData);
+});
+
+document.getElementById("btn-refresh").addEventListener("click", loadAll);
+
+function stBar(pct) {
+  const cls = stClass(pct);
+  const color = cls === "good" ? "var(--good)" : cls === "warn" ? "var(--warn)" : "var(--danger)";
+  return `<span class="st-bar-wrap"><span class="st-bar-fill" style="width:${Math.min(100, pct)}%; background:${color}"></span></span><span class="mono badge ${cls}">${fmtPct(pct)}</span>`;
+}
+
+function ageBadge(days) {
+  if (days === null) return `<span class="badge neutral">—</span>`;
+  return `<span class="badge ${ageClass(days)}">${days}d</span>`;
+}
+
+function renderRanking(data) {
+  let filtered = data;
+  if (currentFilter === "champions") filtered = data.filter((d) => d.st >= 70);
+  else if (currentFilter === "atencao") filtered = data.filter((d) => d.st >= 40 && d.st < 70);
+  else if (currentFilter === "risco") filtered = data.filter((d) => d.st < 40);
+
+  const body = document.getElementById("ranking-body");
+  if (!filtered.length) {
+    body.innerHTML = `<tr><td colspan="8" class="empty-state">Nenhum produto nesse filtro.</td></tr>`;
+    return;
+  }
+  body.innerHTML = filtered
+    .map(
+      (d, i) => `
+      <tr>
+        <td class="mono muted">${i + 1}</td>
+        <td class="mono">${escapeHTML(d.ref)}</td>
+        <td>${escapeHTML(d.nome)}</td>
+        <td>${stBar(d.st)}</td>
+        <td class="num mono">${fmtInt(d.quantidade)}</td>
+        <td class="num mono">${fmtInt(d.estoque)}</td>
+        <td>${ageBadge(d.idade)}</td>
+        <td class="num mono">${fmtBRLCents(d.ticket)}</td>
+      </tr>`
+    )
+    .join("");
+}
+
+function renderDeadStock(data) {
+  const body = document.getElementById("dead-body");
+  if (!data.length) {
+    body.innerHTML = `<tr><td colspan="5" class="empty-state">Nenhum produto parado no critério atual.</td></tr>`;
+    return;
+  }
+  body.innerHTML = data
+    .map(
+      (d) => `
+      <tr>
+        <td class="mono">${escapeHTML(d.ref)}</td>
+        <td>${escapeHTML(d.nome)}</td>
+        <td class="num mono">${fmtInt(d.quantidade)}</td>
+        <td class="num mono">${d.idade}d</td>
+        <td class="num mono">${fmtBRL(d.valorImobilizado)}</td>
+      </tr>`
+    )
+    .join("");
+}
+
+async function loadAll() {
+  setConnStatus("loading", "atualizando…");
+  document.getElementById("footer-status").textContent = "Buscando dados…";
+
+  try {
+    const periodo = dateRangeParams(periodDays);
+    const [vendaspdv, pedidosvendas, estoques, produtos] = await Promise.all([
+      apiGet("v1/vendaspdv", periodo),
+      apiGet("v1/pedidosvendas", periodo),
+      apiGet("v1/estoques", {}),
+      apiGet("v1/produtos", {}),
+    ]);
+
+    const linhasVenda = [...flattenVendas(vendaspdv), ...flattenVendas(pedidosvendas)];
+    const vendasPorProduto = aggregateVendasPorProduto(linhasVenda);
+    const estoquePorProduto = aggregateEstoquePorProduto(normalizeEstoque(estoques));
+    const catalogo = buildProdutoCatalog(produtos);
+
+    const refs = new Set([...vendasPorProduto.keys(), ...estoquePorProduto.keys()]);
+    const linhas = [];
+    let totalVendido = 0, totalFaturado = 0;
+
+    for (const ref of refs) {
+      const venda = vendasPorProduto.get(ref) || { quantidade: 0, valorTotal: 0, nome: null };
+      const estoque = estoquePorProduto.get(ref) || { quantidade: 0, dataEntrada: null };
+      const cat = catalogo.get(ref);
+      const nome = venda.nome || estoque.nome || cat?.nome || "Produto sem nome";
+      const st = venda.quantidade + estoque.quantidade > 0
+        ? (venda.quantidade / (venda.quantidade + estoque.quantidade)) * 100
+        : 0;
+      const idade = estoque.dataEntrada ? daysAgo(estoque.dataEntrada) : null;
+      const ticket = venda.quantidade > 0 ? venda.valorTotal / venda.quantidade : 0;
+
+      totalVendido += venda.quantidade;
+      totalFaturado += venda.valorTotal;
+
+      linhas.push({
+        ref, nome, st, quantidade: venda.quantidade, estoque: estoque.quantidade,
+        idade, ticket, valorImobilizado: estoque.quantidade * (cat?.custo || cat?.preco || ticket || 0),
+      });
+    }
+
+    linhas.sort((a, b) => b.st - a.st);
+    rankingData = linhas;
+    renderRanking(rankingData);
+
+    const dead = linhas
+      .filter((d) => d.estoque > 0 && d.idade !== null && d.idade > 60)
+      .sort((a, b) => b.idade - a.idade);
+    deadStockData = dead;
+    renderDeadStock(dead);
+
+    const deadOver90 = dead.filter((d) => d.idade > 90);
+    const champions = linhas.filter((d) => d.st >= 70);
+    const stMedio = linhas.length ? linhas.reduce((s, d) => s + d.st, 0) / linhas.length : 0;
+    const ticketMedio = totalVendido > 0 ? totalFaturado / totalVendido : 0;
+
+    document.getElementById("kpi-total").textContent = fmtInt(linhas.length);
+    const stEl = document.getElementById("kpi-st");
+    stEl.textContent = fmtPct(stMedio);
+    stEl.className = "value " + stClass(stMedio);
+    document.getElementById("kpi-champions").textContent = fmtInt(champions.length);
+    document.getElementById("kpi-dead").textContent = fmtInt(deadOver90.length) + " SKUs";
+    document.getElementById("kpi-dead-sub").textContent =
+      fmtInt(deadOver90.reduce((s, d) => s + d.quantidade, 0)) + " peças";
+    document.getElementById("kpi-ticket").textContent = fmtBRLCents(ticketMedio);
+
+    setConnStatus("ok", "conectado");
+    document.getElementById("footer-status").textContent =
+      `${linhas.length} produtos · ${fmtInt(vendaspdv.length + pedidosvendas.length)} vendas no período`;
+    setLastUpdate();
+    document.getElementById("last-update-footer").textContent = document.getElementById("last-update").textContent;
+  } catch (err) {
+    console.error(err);
+    setConnStatus("err", "erro na conexão");
+    document.getElementById("footer-status").textContent = "Erro: " + err.message;
+    document.getElementById("ranking-body").innerHTML = `<tr><td colspan="8" class="empty-state">${escapeHTML(err.message)}</td></tr>`;
+    document.getElementById("dead-body").innerHTML = `<tr><td colspan="5" class="empty-state">${escapeHTML(err.message)}</td></tr>`;
+  }
+}
+
+makeSortable(document.querySelector("#ranking-body").closest("table").querySelector("thead"), () => rankingData, (sorted) => { rankingData = sorted; renderRanking(sorted); });
+makeSortable(document.querySelector("#dead-body").closest("table").querySelector("thead"), () => deadStockData, (sorted) => { deadStockData = sorted; renderDeadStock(sorted); });
+
+loadAll();
+</script>
+</body>
+</html>

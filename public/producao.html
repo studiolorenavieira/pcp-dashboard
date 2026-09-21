@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Produção · PCP Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="shared.css" />
+<style>
+  .timeline-month { margin-bottom: 26px; }
+  .timeline-month h3 {
+    font-size: 13px; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em;
+    margin: 0 0 10px; padding-bottom: 8px; border-bottom: 1px solid var(--border);
+    display: flex; justify-content: space-between; align-items: baseline;
+  }
+  .timeline-month h3 .count { color: var(--muted); font-size: 11px; text-transform: none; letter-spacing: 0; }
+  .order-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+  .order-card {
+    background: var(--surface2); border: 1px solid var(--border); border-left: 3px solid var(--muted);
+    border-radius: 8px; padding: 12px 14px;
+  }
+  .order-card.concluida { border-left-color: var(--good); }
+  .order-card.andamento { border-left-color: var(--warn); }
+  .order-card.atrasada { border-left-color: var(--danger); }
+  .order-card .ref { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--muted); }
+  .order-card .nome { font-weight: 600; margin: 3px 0 8px; font-size: 13px; }
+  .order-card .meta { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--muted); }
+  .order-card .qtd { font-family: 'DM Mono', monospace; color: var(--text); font-weight: 600; }
+  .meta-config { display:flex; align-items:center; gap: 8px; }
+  .meta-config input { width: 100px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div id="sidebar-root"></div>
+
+  <main class="main">
+    <div class="page-header">
+      <div>
+        <h1>Ordens de Produção</h1>
+        <div class="desc">Acompanhamento em tempo real das ordens abertas</div>
+      </div>
+      <div class="controls">
+        <div class="meta-config">
+          <label class="muted" style="font-size:12px">Meta do mês (peças)</label>
+          <input type="number" id="meta-input" min="0" step="1" />
+        </div>
+        <button id="btn-refresh" class="primary">↻ Atualizar</button>
+      </div>
+    </div>
+
+    <div class="kpi-row">
+      <div class="kpi"><div class="label">Ordens abertas</div><div class="value" id="kpi-abertas">—</div></div>
+      <div class="kpi"><div class="label">Peças em produção</div><div class="value" id="kpi-pecas">—</div></div>
+      <div class="kpi"><div class="label">Previstas este mês</div><div class="value" id="kpi-mes">—</div></div>
+      <div class="kpi">
+        <div class="label">Gap vs. meta</div>
+        <div class="value" id="kpi-gap">—</div>
+        <div class="sub" id="kpi-gap-sub"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">
+        <h2>Linha do tempo — ordens por mês de previsão</h2>
+        <span class="muted" style="font-size:11.5px">verde = concluída · amarelo = em andamento · vermelho = atrasada</span>
+      </div>
+      <div id="timeline" style="padding:18px;">
+        <div class="empty-state">Carregando…</div>
+      </div>
+    </div>
+
+    <div class="footer-note">
+      <span id="footer-status">—</span>
+      <span id="last-update-footer"></span>
+    </div>
+  </main>
+</div>
+
+<script src="shared.js"></script>
+<script>
+renderSidebar("producao.html");
+
+const metaInput = document.getElementById("meta-input");
+metaInput.value = localStorage.getItem("pcp_meta_mensal") || "";
+metaInput.addEventListener("change", () => {
+  localStorage.setItem("pcp_meta_mensal", metaInput.value);
+  renderKPIs(window.__ordensCache || []);
+});
+
+document.getElementById("btn-refresh").addEventListener("click", loadAll);
+
+function statusInfo(ordem) {
+  const hoje = new Date();
+  const situacao = ordem.status.toLowerCase();
+  const concluida = /conclu|finaliz|encerr/.test(situacao) || !!ordem.dataConclusao;
+  if (concluida) return { cls: "concluida", label: "Concluída" };
+  if (ordem.dataPrevisao && ordem.dataPrevisao < hoje) return { cls: "atrasada", label: "Atrasada" };
+  return { cls: "andamento", label: "Em andamento" };
+}
+
+function renderTimeline(ordens) {
+  const el = document.getElementById("timeline");
+  if (!ordens.length) {
+    el.innerHTML = `<div class="empty-state">Nenhuma ordem de produção encontrada no período consultado.</div>`;
+    return;
+  }
+
+  const byMonth = new Map();
+  for (const o of ordens) {
+    const key = o.dataPrevisao ? monthKey(o.dataPrevisao) : "sem-previsao";
+    if (!byMonth.has(key)) byMonth.set(key, []);
+    byMonth.get(key).push(o);
+  }
+
+  const keys = [...byMonth.keys()].sort();
+  el.innerHTML = keys
+    .map((key) => {
+      const items = byMonth.get(key);
+      const label = key === "sem-previsao" ? "Sem data prevista" : monthLabel(key);
+      const cards = items
+        .map((o) => {
+          const st = statusInfo(o);
+          return `
+            <div class="order-card ${st.cls}">
+              <div class="ref">${escapeHTML(o.ref)} · ${o.tipo === "CAPSULA" ? "CÁPSULA" : "REPOSIÇÃO"}</div>
+              <div class="nome">${escapeHTML(o.nome)}</div>
+              <div class="meta">
+                <span class="qtd">${fmtInt(o.quantidade)} pçs</span>
+                <span class="badge ${st.cls === "concluida" ? "good" : st.cls === "atrasada" ? "danger" : "warn"}">${st.label}</span>
+              </div>
+              <div class="meta" style="margin-top:6px">
+                <span>${o.dataPrevisao ? o.dataPrevisao.toLocaleDateString("pt-BR") : "—"}</span>
+              </div>
+            </div>`;
+        })
+        .join("");
+      return `
+        <div class="timeline-month">
+          <h3>${label} <span class="count">${items.length} ordem(ns) · ${fmtInt(items.reduce((s, i) => s + i.quantidade, 0))} peças</span></h3>
+          <div class="order-grid">${cards}</div>
+        </div>`;
+    })
+    .join("");
+}
+
+function renderKPIs(ordens) {
+  const abertas = ordens.filter((o) => statusInfo(o).cls !== "concluida");
+  const pecasEmProducao = abertas.reduce((s, o) => s + o.quantidade, 0);
+
+  const now = new Date();
+  const mesAtual = monthKey(now);
+  const previstasMes = ordens.filter((o) => o.dataPrevisao && monthKey(o.dataPrevisao) === mesAtual);
+  const pecasMes = previstasMes.reduce((s, o) => s + o.quantidade, 0);
+
+  document.getElementById("kpi-abertas").textContent = fmtInt(abertas.length);
+  document.getElementById("kpi-pecas").textContent = fmtInt(pecasEmProducao);
+  document.getElementById("kpi-mes").textContent = fmtInt(pecasMes);
+
+  const meta = Number(metaInput.value);
+  const gapEl = document.getElementById("kpi-gap");
+  const gapSub = document.getElementById("kpi-gap-sub");
+  if (!meta) {
+    gapEl.textContent = "—";
+    gapEl.className = "value";
+    gapSub.textContent = "defina a meta do mês ao lado";
+  } else {
+    const gap = pecasMes - meta;
+    gapEl.textContent = (gap >= 0 ? "+" : "") + fmtInt(gap);
+    gapEl.className = "value " + (gap >= 0 ? "good" : gap > -meta * 0.2 ? "warn" : "danger");
+    gapSub.textContent = `meta: ${fmtInt(meta)} pçs · previsto: ${fmtInt(pecasMes)} pçs`;
+  }
+}
+
+async function loadAll() {
+  setConnStatus("loading", "atualizando…");
+  document.getElementById("footer-status").textContent = "Buscando ordens de produção…";
+  try {
+    const hoje = new Date();
+    const inicio = new Date();
+    inicio.setMonth(inicio.getMonth() - 3); // últimas ordens + as previstas à frente já vêm no cadastro
+    const fim = new Date();
+    fim.setMonth(fim.getMonth() + 6);
+
+    const raw = await apiGet("v1/ordensproducao", { DataInicial: isoDate(inicio), DataFinal: isoDate(fim) });
+    const ordens = normalizeOrdens(raw);
+    window.__ordensCache = ordens;
+
+    renderTimeline(ordens);
+    renderKPIs(ordens);
+
+    setConnStatus("ok", "conectado");
+    document.getElementById("footer-status").textContent = `${ordens.length} ordens de produção carregadas`;
+    setLastUpdate();
+    document.getElementById("last-update-footer").textContent = document.getElementById("last-update").textContent;
+  } catch (err) {
+    console.error(err);
+    setConnStatus("err", "erro na conexão");
+    document.getElementById("footer-status").textContent = "Erro: " + err.message;
+    document.getElementById("timeline").innerHTML = `<div class="empty-state">${escapeHTML(err.message)}</div>`;
+  }
+}
+
+loadAll();
+</script>
+</body>
+</html>

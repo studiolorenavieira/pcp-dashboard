@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Curva ABC & Histórico · PCP Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="shared.css" />
+<style>
+  .abc-badge { width: 22px; height:22px; border-radius:6px; display:inline-flex; align-items:center; justify-content:center; font-weight:700; font-size:11px; }
+  .abc-badge.A { background: var(--good-dim); color: var(--good); }
+  .abc-badge.B { background: var(--warn-dim); color: var(--warn); }
+  .abc-badge.C { background: var(--danger-dim); color: var(--danger); }
+  .bar-row { display:flex; align-items:center; gap:10px; padding:5px 0; }
+  .bar-row .bar-label { width: 190px; flex-shrink:0; font-size:11.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .bar-row .bar-track { flex:1; height:16px; background:var(--surface2); border-radius:4px; overflow:hidden; }
+  .bar-row .bar-fill { height:100%; background: var(--accent); border-radius:4px; }
+  .bar-row .bar-value { width:90px; text-align:right; font-family:'DM Mono',monospace; font-size:11.5px; flex-shrink:0; }
+  .search-row { position: relative; }
+  .search-results {
+    position: absolute; top: 100%; left: 0; right: 0; background: var(--surface2);
+    border: 1px solid var(--border); border-radius: 8px; margin-top: 4px; max-height: 260px;
+    overflow-y: auto; z-index: 10; display: none;
+  }
+  .search-results.open { display: block; }
+  .search-results div { padding: 8px 12px; cursor: pointer; font-size: 12.5px; }
+  .search-results div:hover { background: var(--surface); color: var(--accent); }
+  #history-chart { width: 100%; height: 260px; }
+  .legend { display:flex; gap:16px; font-size:11.5px; color:var(--muted); margin-top:8px; }
+  .legend span { display:flex; align-items:center; gap:6px; }
+  .legend .dot { width:10px; height:10px; border-radius:2px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div id="sidebar-root"></div>
+
+  <main class="main">
+    <div class="page-header">
+      <div>
+        <h1>Curva ABC & Histórico</h1>
+        <div class="desc">Classificação de produtos por faturamento e sazonalidade individual</div>
+      </div>
+      <div class="controls">
+        <div class="seg" id="period-seg">
+          <button data-days="30">30d</button>
+          <button data-days="60">60d</button>
+          <button data-days="90" class="active">90d</button>
+          <button data-days="180">180d</button>
+          <button data-days="365">365d</button>
+        </div>
+        <button id="btn-refresh" class="primary">↻ Atualizar</button>
+      </div>
+    </div>
+
+    <div class="kpi-row">
+      <div class="kpi"><div class="label">Faturamento do período</div><div class="value" id="kpi-fat">—</div></div>
+      <div class="kpi"><div class="label">Classe A (SKUs)</div><div class="value good" id="kpi-a">—</div></div>
+      <div class="kpi"><div class="label">Classe B (SKUs)</div><div class="value warn" id="kpi-b">—</div></div>
+      <div class="kpi"><div class="label">Classe C (SKUs)</div><div class="value danger" id="kpi-c">—</div></div>
+    </div>
+
+    <div class="panel" style="margin-bottom:16px">
+      <div class="panel-header"><h2>Top 20 — faturamento por produto</h2></div>
+      <div id="bar-chart" style="padding:16px 18px;"></div>
+    </div>
+
+    <div class="panel" style="margin-bottom:16px">
+      <div class="panel-header"><h2>Curva ABC completa</h2></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th data-key="curva">Curva</th>
+              <th data-key="ref">Ref</th>
+              <th data-key="nome">Produto</th>
+              <th data-key="quantidade" class="num">Qtd vendida</th>
+              <th data-key="faturamento" class="num">Faturamento</th>
+              <th data-key="pctTotal" class="num">% do total</th>
+              <th data-key="ticket" class="num">Ticket médio</th>
+            </tr>
+          </thead>
+          <tbody id="abc-body"><tr><td colspan="7" class="empty-state">Carregando…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">
+        <h2>Histórico de sazonalidade por produto</h2>
+        <div class="search-row">
+          <input type="text" class="search-input" id="produto-search" placeholder="Buscar produto por referência ou nome…" />
+          <div class="search-results" id="search-results"></div>
+        </div>
+      </div>
+      <div style="padding:18px;">
+        <div id="history-empty" class="empty-state">Busque um produto acima para ver o histórico de vendas mês a mês.</div>
+        <div id="history-content" style="display:none">
+          <h3 id="history-title" style="margin:0 0 10px; font-size:14px;"></h3>
+          <svg id="history-chart" viewBox="0 0 900 260" preserveAspectRatio="none"></svg>
+          <div class="legend">
+            <span><span class="dot" style="background:var(--accent)"></span> Ano atual</span>
+            <span><span class="dot" style="background:var(--muted)"></span> Ano anterior</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer-note">
+      <span id="footer-status">—</span>
+      <span id="last-update-footer"></span>
+    </div>
+  </main>
+</div>
+
+<script src="shared.js"></script>
+<script>
+renderSidebar("produtos.html");
+
+let periodDays = 90;
+let abcData = [];
+let allProdutosCache = [];
+let vendasFlatCache = [];
+
+document.getElementById("period-seg").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-days]");
+  if (!btn) return;
+  document.querySelectorAll("#period-seg button").forEach((b) => b.classList.remove("active"));
+  btn.classList.add("active");
+  periodDays = Number(btn.dataset.days);
+  loadAll();
+});
+document.getElementById("btn-refresh").addEventListener("click", loadAll);
+
+function renderBarChart(top20) {
+  const el = document.getElementById("bar-chart");
+  if (!top20.length) { el.innerHTML = `<div class="empty-state">Sem dados no período.</div>`; return; }
+  const max = Math.max(...top20.map((d) => d.faturamento));
+  el.innerHTML = top20
+    .map(
+      (d) => `
+      <div class="bar-row">
+        <div class="bar-label" title="${escapeHTML(d.nome)}">${escapeHTML(d.ref)} — ${escapeHTML(d.nome)}</div>
+        <div class="bar-track"><div class="bar-fill" style="width:${(d.faturamento / max) * 100}%"></div></div>
+        <div class="bar-value">${fmtBRL(d.faturamento)}</div>
+      </div>`
+    )
+    .join("");
+}
+
+function renderABCTable(data) {
+  const body = document.getElementById("abc-body");
+  if (!data.length) {
+    body.innerHTML = `<tr><td colspan="7" class="empty-state">Sem vendas no período selecionado.</td></tr>`;
+    return;
+  }
+  body.innerHTML = data
+    .map(
+      (d) => `
+      <tr>
+        <td><span class="abc-badge ${d.curva}">${d.curva}</span></td>
+        <td class="mono">${escapeHTML(d.ref)}</td>
+        <td>${escapeHTML(d.nome)}</td>
+        <td class="num mono">${fmtInt(d.quantidade)}</td>
+        <td class="num mono">${fmtBRL(d.faturamento)}</td>
+        <td class="num mono">${fmtPct(d.pctTotal, 1)}</td>
+        <td class="num mono">${fmtBRLCents(d.ticket)}</td>
+      </tr>`
+    )
+    .join("");
+}
+
+/* --------------------------- Busca de produto --------------------------- */
+
+const searchInput = document.getElementById("produto-search");
+const searchResults = document.getElementById("search-results");
+
+searchInput.addEventListener("input", debounce(() => {
+  const q = searchInput.value.trim().toLowerCase();
+  if (q.length < 2) { searchResults.classList.remove("open"); return; }
+  const matches = allProdutosCache
+    .filter((p) => p.ref.toLowerCase().includes(q) || p.nome.toLowerCase().includes(q))
+    .slice(0, 30);
+  if (!matches.length) {
+    searchResults.innerHTML = `<div class="muted">Nenhum produto encontrado</div>`;
+  } else {
+    searchResults.innerHTML = matches
+      .map((p) => `<div data-ref="${escapeHTML(p.ref)}">${escapeHTML(p.ref)} — ${escapeHTML(p.nome)}</div>`)
+      .join("");
+  }
+  searchResults.classList.add("open");
+}, 200));
+
+searchResults.addEventListener("click", (e) => {
+  const div = e.target.closest("div[data-ref]");
+  if (!div) return;
+  searchInput.value = div.dataset.ref;
+  searchResults.classList.remove("open");
+  showHistory(div.dataset.ref);
+});
+
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".search-row")) searchResults.classList.remove("open");
+});
+
+function showHistory(ref) {
+  const linhas = vendasFlatCache.filter((l) => l.ref === ref);
+  if (!linhas.length) return;
+
+  document.getElementById("history-empty").style.display = "none";
+  document.getElementById("history-content").style.display = "";
+  const nome = linhas[0].nome;
+  document.getElementById("history-title").textContent = `${ref} — ${nome}`;
+
+  const now = new Date();
+  const anoAtual = new Array(12).fill(0);
+  const anoAnterior = new Array(12).fill(0);
+  const mesesLabels = [];
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    mesesLabels.push(monthLabel(monthKey(d)));
+  }
+
+  for (const l of linhas) {
+    const diffMeses = (now.getFullYear() - l.data.getFullYear()) * 12 + (now.getMonth() - l.data.getMonth());
+    if (diffMeses >= 0 && diffMeses < 12) {
+      anoAtual[11 - diffMeses] += l.quantidade;
+    }
+    const diffMesesAnt = diffMeses - 12;
+    if (diffMesesAnt >= 0 && diffMesesAnt < 12) {
+      anoAnterior[11 - diffMesesAnt] += l.quantidade;
+    }
+  }
+
+  drawLineChart(mesesLabels, anoAtual, anoAnterior);
+}
+
+function drawLineChart(labels, serieA, serieB) {
+  const svg = document.getElementById("history-chart");
+  const W = 900, H = 260, padL = 34, padB = 26, padT = 10, padR = 10;
+  const max = Math.max(1, ...serieA, ...serieB);
+  const stepX = (W - padL - padR) / (labels.length - 1);
+  const scaleY = (v) => H - padB - (v / max) * (H - padT - padB);
+
+  const pathFor = (serie) =>
+    serie.map((v, i) => `${i === 0 ? "M" : "L"} ${padL + i * stepX} ${scaleY(v)}`).join(" ");
+
+  const gridLines = [0, 0.25, 0.5, 0.75, 1].map((f) => {
+    const y = H - padB - f * (H - padT - padB);
+    return `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="var(--border)" stroke-width="1" />
+            <text x="${padL - 6}" y="${y + 3}" text-anchor="end" font-size="9" fill="var(--muted)" font-family="DM Mono, monospace">${fmtInt(max * f)}</text>`;
+  }).join("");
+
+  const xLabels = labels.map((l, i) => `<text x="${padL + i * stepX}" y="${H - 8}" text-anchor="middle" font-size="9" fill="var(--muted)">${l}</text>`).join("");
+
+  const dotsFor = (serie, color) =>
+    serie.map((v, i) => `<circle cx="${padL + i * stepX}" cy="${scaleY(v)}" r="2.5" fill="${color}" />`).join("");
+
+  svg.innerHTML = `
+    ${gridLines}
+    <path d="${pathFor(serieB)}" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="4,3" />
+    ${dotsFor(serieB, "var(--muted)")}
+    <path d="${pathFor(serieA)}" fill="none" stroke="var(--accent)" stroke-width="2" />
+    ${dotsFor(serieA, "var(--accent)")}
+    ${xLabels}
+  `;
+}
+
+async function loadAll() {
+  setConnStatus("loading", "atualizando…");
+  document.getElementById("footer-status").textContent = "Calculando curva ABC…";
+  try {
+    const periodo = dateRangeParams(periodDays);
+    const fimHistorico = new Date();
+    const inicioHistorico = new Date();
+    inicioHistorico.setMonth(inicioHistorico.getMonth() - 25);
+
+    const [vendaspdv, pedidosvendas, vendasHist, pedidosHist, produtos] = await Promise.all([
+      apiGet("v1/vendaspdv", periodo),
+      apiGet("v1/pedidosvendas", periodo),
+      apiGet("v1/vendaspdv", { DataInicial: isoDate(inicioHistorico), DataFinal: isoDate(fimHistorico) }),
+      apiGet("v1/pedidosvendas", { DataInicial: isoDate(inicioHistorico), DataFinal: isoDate(fimHistorico) }),
+      apiGet("v1/produtos", {}),
+    ]);
+
+    allProdutosCache = [...buildProdutoCatalog(produtos).values()];
+    vendasFlatCache = [...flattenVendas(vendasHist), ...flattenVendas(pedidosHist)].filter((l) => l.data);
+
+    const linhasPeriodo = [...flattenVendas(vendaspdv), ...flattenVendas(pedidosvendas)];
+    const porProduto = aggregateVendasPorProduto(linhasPeriodo);
+
+    const totalFaturamento = [...porProduto.values()].reduce((s, p) => s + p.valorTotal, 0);
+    const lista = [...porProduto.values()]
+      .filter((p) => p.valorTotal > 0 || p.quantidade > 0)
+      .sort((a, b) => b.valorTotal - a.valorTotal);
+
+    const n = lista.length;
+    const limiteA = Math.ceil(n * 0.2);
+    const limiteB = limiteA + Math.ceil(n * 0.3);
+
+    const withCurva = lista.map((p, i) => ({
+      ref: p.ref,
+      nome: p.nome,
+      quantidade: p.quantidade,
+      faturamento: p.valorTotal,
+      ticket: p.quantidade > 0 ? p.valorTotal / p.quantidade : 0,
+      pctTotal: totalFaturamento > 0 ? (p.valorTotal / totalFaturamento) * 100 : 0,
+      curva: i < limiteA ? "A" : i < limiteB ? "B" : "C",
+    }));
+
+    abcData = withCurva;
+    renderABCTable(withCurva);
+    renderBarChart(withCurva.slice(0, 20));
+
+    document.getElementById("kpi-fat").textContent = fmtBRL(totalFaturamento);
+    document.getElementById("kpi-a").textContent = fmtInt(withCurva.filter((d) => d.curva === "A").length);
+    document.getElementById("kpi-b").textContent = fmtInt(withCurva.filter((d) => d.curva === "B").length);
+    document.getElementById("kpi-c").textContent = fmtInt(withCurva.filter((d) => d.curva === "C").length);
+
+    setConnStatus("ok", "conectado");
+    document.getElementById("footer-status").textContent = `${withCurva.length} produtos classificados`;
+    setLastUpdate();
+    document.getElementById("last-update-footer").textContent = document.getElementById("last-update").textContent;
+  } catch (err) {
+    console.error(err);
+    setConnStatus("err", "erro na conexão");
+    document.getElementById("footer-status").textContent = "Erro: " + err.message;
+    document.getElementById("abc-body").innerHTML = `<tr><td colspan="7" class="empty-state">${escapeHTML(err.message)}</td></tr>`;
+  }
+}
+
+makeSortable(document.querySelector("#abc-body").closest("table").querySelector("thead"), () => abcData, (sorted) => { abcData = sorted; renderABCTable(sorted); });
+
+loadAll();
+</script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+{
+  "name": "pcp-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "description": "PCP Dashboard - Studio Lorena Vieira",
+  "scripts": {
+    "dev": "netlify dev"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
