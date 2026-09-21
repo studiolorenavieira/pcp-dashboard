@@ -1,0 +1,64 @@
+name: Aquecer cache de estoque
+
+# Mantem a tabela pcp_estoque_cache (Supabase) sempre quente, chamando o
+# endpoint estoque-lote em segundo plano, em vez de deixar esse trabalho
+# acontecer ao vivo quando alguem abre o dashboard (o que travava as telas
+# de Sell-through, Sugestao PCP e Curva ABC por varios minutos com o cache
+# frio, ja que a DAPIC limita a 60 requisicoes/min para a empresa toda).
+#
+# Cada chamada ao estoque-lote ja respeita esse limite internamente (pausa
+# de ~1.1s entre produtos nao cacheados) e processa o que couber em ~20s;
+# por isso este job repete a chamada, seguindo a paginacao (proximoOffset),
+# ate passar por todo o catalogo (~550 produtos ativos) ou ate o limite de
+# rodadas abaixo. Rodando a cada 15 min, o cache (TTL de 1h) nunca fica
+# velho o suficiente para o usuario sentir a demora.
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  warm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Percorrer o catalogo aquecendo o cache
+        run: |
+          BASE="https://lrtphrdqyeoblbwwnujv.supabase.co/functions/v1/pcp-dapic"
+          KEY="sb_publishable_3uUw6iqFiXqBwnU5Kj5k7Q_PEMLUHEe"
+          OFFSET=0
+          RODADA=1
+          MAX_RODADAS=60
+
+          while [ "$RODADA" -le "$MAX_RODADAS" ]; do
+            RESP=$(curl -sS -G "$BASE" \
+              -H "Authorization: Bearer $KEY" \
+              -H "apikey: $KEY" \
+              --data-urlencode "endpoint=estoque-lote" \
+              --data-urlencode "offset=$OFFSET" \
+              --data-urlencode "limite=100")
+
+            NEXT=$(echo "$RESP" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+except Exception as e:
+    print('ERRO', file=sys.stderr)
+    print(e, file=sys.stderr)
+    sys.exit(1)
+next_offset = d.get('proximoOffset')
+total = d.get('totalProdutos')
+qtd = len(d.get('produtos') or [])
+print(f'offset={d.get(\"offset\")} produtos_nesta_rodada={qtd} total={total} proximoOffset={next_offset}', file=sys.stderr)
+print(next_offset if next_offset is not None else '')
+")
+            echo "rodada $RODADA -> $NEXT"
+
+            if [ -z "$NEXT" ]; then
+              echo "Cache totalmente quente — catalogo inteiro percorrido nesta rodada."
+              break
+            fi
+
+            OFFSET="$NEXT"
+            RODADA=$((RODADA + 1))
+          done
