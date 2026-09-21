@@ -199,7 +199,11 @@ async function loadAll() {
     ]);
 
     const produtosComGrades = await fetchEstoqueCompleto((carregados, total) => {
-      document.getElementById("footer-status").textContent = `Buscando estoque… ${carregados}/${total}`;
+      const pct = total ? Math.round((carregados / total) * 100) : 0;
+      const msg = `Buscando estoque… ${carregados}/${total} produtos (${pct}%) — pode levar alguns minutos na primeira consulta do dia (a DAPIC limita a 60 requisições/min)`;
+      document.getElementById("footer-status").textContent = msg;
+      document.getElementById("ranking-body").innerHTML = `<tr><td colspan="8" class="empty-state">${escapeHTML(msg)}</td></tr>`;
+      document.getElementById("dead-body").innerHTML = `<tr><td colspan="5" class="empty-state">${escapeHTML(msg)}</td></tr>`;
     });
     const estoquePorProduto = estoqueLoteParaMapa(produtosComGrades);
 
