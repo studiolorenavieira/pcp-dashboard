@@ -266,6 +266,8 @@ exports.handler = async (event) => {
       const url = new URL(`${DAPIC_BASE}/${qs.raw}`);
       url.searchParams.set("Pagina", "1");
       url.searchParams.set("RegistrosPorPagina", "5");
+      if (qs.DataInicial) url.searchParams.set("DataInicial", qs.DataInicial);
+      if (qs.DataFinal) url.searchParams.set("DataFinal", qs.DataFinal);
       const res = await fetch(url.toString(), {
         headers: { Authorization: `Bearer ${token}` },
       });
