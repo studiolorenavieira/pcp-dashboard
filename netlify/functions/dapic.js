@@ -73,11 +73,7 @@ async function login() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       Empresa: identificador,
-      empresa: identificador,
-      identificador,
       TokenIntegracao: token,
-      Token: token,
-      token,
     }),
   });
 
