@@ -255,6 +255,27 @@ exports.handler = async (event) => {
   }
 
   const qs = event.queryStringParameters || {};
+
+  // Modo de debug temporário: testa um caminho arbitrário na DAPIC para
+  // descobrirmos os nomes reais dos endpoints (a API não é documentada
+  // publicamente). Uso: /api/dapic?raw=v1/algumacoisa
+  // TODO: remover depois que todos os endpoints forem confirmados.
+  if (qs.raw) {
+    try {
+      const token = await getToken();
+      const url = new URL(`${DAPIC_BASE}/${qs.raw}`);
+      url.searchParams.set("Pagina", "1");
+      url.searchParams.set("RegistrosPorPagina", "5");
+      const res = await fetch(url.toString(), {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const text = await safeText(res);
+      return jsonResponse(200, { pathTestado: qs.raw, status: res.status, corpo: text.slice(0, 1500) });
+    } catch (err) {
+      return jsonResponse(200, { pathTestado: qs.raw, erro: err.message });
+    }
+  }
+
   const endpoint = qs.endpoint;
 
   if (!endpoint || !ENDPOINT_VARIANTS[endpoint]) {
