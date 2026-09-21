@@ -24,7 +24,7 @@
   .order-card.andamento { border-left-color: var(--warn); }
   .order-card.atrasada { border-left-color: var(--danger); }
   .order-card .ref { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--muted); }
-  .order-card .nome { font-weight: 600; margin: 3px 0 8px; font-size: 13px; }
+  .order-card .tipo-label { font-weight: 600; margin: 3px 0 8px; font-size: 13px; }
   .order-card .meta { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--muted); }
   .order-card .qtd { font-family: 'DM Mono', monospace; color: var(--text); font-weight: 600; }
   .meta-config { display:flex; align-items:center; gap: 8px; }
@@ -64,7 +64,7 @@
     <div class="panel">
       <div class="panel-header">
         <h2>Linha do tempo — ordens por mês de previsão</h2>
-        <span class="muted" style="font-size:11.5px">verde = concluída · amarelo = em andamento · vermelho = atrasada</span>
+        <span class="muted" style="font-size:11.5px">verde = concluída · amarelo = em andamento · vermelho = atrasada · a DAPIC não informa o nome do produto nas ordens — exibimos o nº da ordem</span>
       </div>
       <div id="timeline" style="padding:18px;">
         <div class="empty-state">Carregando…</div>
@@ -124,8 +124,8 @@ function renderTimeline(ordens) {
           const st = statusInfo(o);
           return `
             <div class="order-card ${st.cls}">
-              <div class="ref">${escapeHTML(o.ref)} · ${o.tipo === "CAPSULA" ? "CÁPSULA" : "REPOSIÇÃO"}</div>
-              <div class="nome">${escapeHTML(o.nome)}</div>
+              <div class="tipo-label">${o.tipo === "CAPSULA" ? "CÁPSULA" : "REPOSIÇÃO"}${o.nome ? " · " + escapeHTML(o.nome) : ""}</div>
+              <div class="ref" style="margin-bottom:8px">Ordem ${escapeHTML(o.ref)}</div>
               <div class="meta">
                 <span class="qtd">${fmtInt(o.quantidade)} pçs</span>
                 <span class="badge ${st.cls === "concluida" ? "good" : st.cls === "atrasada" ? "danger" : "warn"}">${st.label}</span>
