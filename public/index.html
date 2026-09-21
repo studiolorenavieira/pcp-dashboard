@@ -214,6 +214,9 @@ async function loadAll() {
     for (const ref of refs) {
       const venda = vendasPorProduto.get(ref) || { quantidade: 0, valorTotal: 0, nome: null, ultimaVenda: null };
       const estoque = estoquePorProduto.get(ref) || { quantidade: 0 };
+      // Sem venda no período E sem estoque = nenhum sinal (frequentemente
+      // registros órfãos/de teste na DAPIC) — não ajuda em nada no ranking.
+      if (venda.quantidade === 0 && estoque.quantidade === 0) continue;
       const cat = catalogo.get(ref);
       const nome = venda.nome || estoque.nome || cat?.nome || "Produto sem nome";
       const st = venda.quantidade + estoque.quantidade > 0
