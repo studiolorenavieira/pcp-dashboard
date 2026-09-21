@@ -258,9 +258,15 @@ exports.handler = async (event) => {
 
   // Modo de debug temporário: testa um caminho arbitrário na DAPIC para
   // descobrirmos os nomes reais dos endpoints (a API não é documentada
-  // publicamente). Uso: /api/dapic?raw=v1/algumacoisa
+  // publicamente). Uso: /api/dapic?raw=v1/algumacoisa&chave=...
+  // Protegido por uma chave simples pois esta rota ignora a whitelist de
+  // endpoints — sem isso, qualquer visitante do site poderia usar nosso
+  // token DAPIC para ler dados arbitrários.
   // TODO: remover depois que todos os endpoints forem confirmados.
   if (qs.raw) {
+    if (qs.chave !== "slv-debug-2026") {
+      return jsonResponse(403, { erro: "Chave de debug inválida." });
+    }
     try {
       const token = await getToken();
       const url = new URL(`${DAPIC_BASE}/${qs.raw}`);
