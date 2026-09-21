@@ -5,11 +5,16 @@ PCP (Planejamento e Controle da Produção) baseadas em dados.
 
 ## Arquitetura
 
-- **Backend**: uma única Netlify Function (`netlify/functions/dapic.js`) que autentica
-  na DAPIC server-side, renova o token automaticamente, busca todas as páginas de um
+- **Backend**: uma Supabase Edge Function (`supabase/functions/pcp-dapic/index.ts`,
+  projeto `lrtphrdqyeoblbwwnujv`) que autentica na DAPIC server-side, renova o token
+  automaticamente (cacheado em `pcp_dapic_token`), busca todas as páginas de um
   endpoint e devolve `{ dados, total }`. O token da DAPIC nunca é exposto ao browser.
-- **Frontend**: HTML/CSS/JS puro, sem frameworks e sem banco de dados — tudo vem da
-  DAPIC em tempo real, via `/api/dapic?endpoint=...`.
+  O saldo de estoque (sem endpoint de listagem na DAPIC) é buscado em lotes por
+  produto e cacheado em `pcp_estoque_cache` (TTL de 1h), respeitando o rate limit de
+  60 req/min da DAPIC.
+- **Frontend**: HTML/CSS/JS puro, sem frameworks e sem build — publicado no GitHub
+  Pages (deploy automático via GitHub Actions a cada push na `main`). Tudo vem da
+  DAPIC em tempo real, via a Edge Function acima.
 
 ## Telas
 
@@ -20,21 +25,17 @@ PCP (Planejamento e Controle da Produção) baseadas em dados.
 | `public/pcp.html` | Sugestão de produção (reposição calculada + cápsula manual) |
 | `public/produtos.html` | Curva ABC dinâmica + histórico de sazonalidade por produto |
 
-## Variáveis de ambiente (Netlify)
+## Variáveis de ambiente / segredos (Supabase)
 
-Configurar em *Site settings → Environment variables*:
+Configurados em *Project settings → Edge Functions → Secrets* do projeto
+`lrtphrdqyeoblbwwnujv`:
 
 - `DAPIC_IDENTIFICADOR`
 - `DAPIC_TOKEN`
 
-Veja `.env.example`.
-
-## Desenvolvimento local
-
-```bash
-npm install -g netlify-cli
-netlify dev
-```
+A chave pública do Supabase (`sb_publishable_...`) usada pelo frontend para chamar a
+Edge Function fica em `public/shared.js` — ela não dá acesso a nada sensível, é só a
+chave de gateway do Supabase (equivalente à `anon key`).
 
 ## Nota sobre os nomes de campo da API DAPIC
 
@@ -45,9 +46,10 @@ navegador: cada chamada loga uma amostra do primeiro registro cru retornado pela
 API — isso mostra o nome real do campo, que pode então ser adicionado em
 `FIELD_ALIASES` (um único lugar, no topo de `shared.js`).
 
-## Limitações conhecidas
+## Histórico
 
-- Netlify Functions (plano padrão) têm timeout de ~10s por invocação. Se um endpoint
-  tiver muitas páginas de dados no período consultado, a função pode estourar esse
-  limite. Se isso acontecer, considere: (a) upgrade do plano Netlify (26s de timeout),
-  ou (b) consultar períodos mais curtos nas telas.
+O projeto rodou inicialmente em Netlify Functions + Netlify Hosting. Foi migrado
+para Supabase Edge Functions + GitHub Pages para não depender do modelo de créditos
+do Netlify (que se esgotava com deploys frequentes durante o desenvolvimento). Os
+arquivos antigos (`netlify/`, `netlify.toml`) ficaram no repositório por enquanto,
+mas não são mais usados no deploy atual.
