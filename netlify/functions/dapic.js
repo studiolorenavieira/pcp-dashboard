@@ -264,15 +264,34 @@ exports.handler = async (event) => {
     try {
       const token = await getToken();
       const url = new URL(`${DAPIC_BASE}/${qs.raw}`);
-      url.searchParams.set("Pagina", "1");
-      url.searchParams.set("RegistrosPorPagina", "5");
+      url.searchParams.set("Pagina", qs.pagina || "1");
+      url.searchParams.set("RegistrosPorPagina", qs.tamanho || "5");
       if (qs.DataInicial) url.searchParams.set("DataInicial", qs.DataInicial);
       if (qs.DataFinal) url.searchParams.set("DataFinal", qs.DataFinal);
       const res = await fetch(url.toString(), {
         headers: { Authorization: `Bearer ${token}` },
       });
       const text = await safeText(res);
-      return jsonResponse(200, { pathTestado: qs.raw, status: res.status, corpo: text.slice(0, 1500) });
+      let resumo = null;
+      try {
+        const parsed = JSON.parse(text);
+        const arr = extractArray(parsed);
+        resumo = {
+          chavesRaiz: parsed && typeof parsed === "object" ? Object.keys(parsed) : null,
+          quantidadeItens: arr.length,
+          total: extractTotal(parsed, null),
+          primeiroItem: arr[0] || parsed,
+          chavesPrimeiroItem: arr[0] ? Object.keys(arr[0]) : null,
+        };
+      } catch {
+        // corpo não é JSON válido; ignora resumo
+      }
+      return jsonResponse(200, {
+        pathTestado: qs.raw,
+        status: res.status,
+        resumo,
+        corpo: text.slice(0, 1200),
+      });
     } catch (err) {
       return jsonResponse(200, { pathTestado: qs.raw, erro: err.message });
     }
