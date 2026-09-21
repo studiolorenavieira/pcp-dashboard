@@ -1,8 +1,8 @@
 // shared.js — utilitários comuns às 4 telas do PCP Dashboard
 // (cliente da API, formatação, normalização de dados DAPIC, sidebar, tabelas ordenáveis)
 
-const API_BASE = "/api/dapic";
-
+const API_BASE = "https://lrtphrdqyeoblbwwnujv.supabase.co/functions/v1/pcp-dapic";
+const SUPABASE_ANON_KEY = "sb_publishable_3uUw6iqFiXqBwnU5Kj5k7Q_PEMLUHEe";
 /* =========================================================================
    NOTA SOBRE OS NOMES DE CAMPO DA DAPIC
    -------------------------------------------------------------------------
@@ -59,8 +59,7 @@ async function apiGet(endpoint, params = {}) {
   Object.entries(params).forEach(([k, v]) => {
     if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, v);
   });
-  const res = await fetch(url.toString());
-  const json = await res.json().catch(() => ({}));
+const res = await fetch(url.toString(), { headers: { Authorization: `Bearer ${SUPABASE_ANON_KEY}`, apikey: SUPABASE_ANON_KEY } });  const json = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new Error(json.erro || `Erro ao consultar ${endpoint} (HTTP ${res.status})`);
   }
@@ -99,8 +98,7 @@ async function apiGetRaw(endpoint, params = {}) {
   Object.entries(params).forEach(([k, v]) => {
     if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, v);
   });
-  const res = await fetch(url.toString());
-  const json = await res.json().catch(() => ({}));
+const res = await fetch(url.toString(), { headers: { Authorization: `Bearer ${SUPABASE_ANON_KEY}`, apikey: SUPABASE_ANON_KEY } });  const json = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new Error(json.erro || `Erro ao consultar ${endpoint} (HTTP ${res.status})`);
   }
