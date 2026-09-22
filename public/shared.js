@@ -19,14 +19,17 @@ const SUPABASE_ANON_KEY = "sb_publishable_3uUw6iqFiXqBwnU5Kj5k7Q_PEMLUHEe";
 function getField(obj, candidates) {
   if (!obj || typeof obj !== "object") return undefined;
   const keys = Object.keys(obj);
+  // Um candidato PRESENTE mas null (ex: "DataFechamento" numa venda ainda
+  // aberta) não conta como achado — senão a busca para aí e nunca tenta o
+  // próximo candidato da lista, mesmo que ele tenha um valor real.
   for (const candidate of candidates) {
-    if (obj[candidate] !== undefined) return obj[candidate];
+    if (obj[candidate] !== undefined && obj[candidate] !== null) return obj[candidate];
   }
   const lowerMap = {};
   keys.forEach((k) => (lowerMap[k.toLowerCase()] = k));
   for (const candidate of candidates) {
     const hit = lowerMap[candidate.toLowerCase()];
-    if (hit !== undefined && obj[hit] !== undefined) return obj[hit];
+    if (hit !== undefined && obj[hit] !== undefined && obj[hit] !== null) return obj[hit];
   }
   return undefined;
 }
@@ -36,7 +39,14 @@ const FIELD_ALIASES = {
   produtoNome: ["Nome", "NomeProduto", "Descricao", "DescricaoProduto", "Produto"],
   quantidade: ["Quantidade", "Qtd", "QtdVendida", "QtdEstoque", "Saldo", "SaldoEstoque", "QuantidadeTotal", "QuantidadeFinalizada"],
   valorTotal: ["ValorTotal", "ValorLiquido", "ValorItem", "Total", "ValorVenda", "ValorFaturado"],
-  data: ["DataVenda", "Data", "DataEmissao", "DataPedido", "DataFatura", "DataMovimentacao"],
+  // "DataFechamento" (data em que a venda foi fechada) é o campo real usado
+  // por v1/vendaspdv — vem null enquanto a venda está "Aberta"/"Cancelada",
+  // então "DataModificacao" cobre esses casos como 2ª opção. Achado
+  // inspecionando o retorno cru (22/09/2026) — antes disso a lista de
+  // candidatos não tinha nenhum desses dois nomes, e todo item de venda
+  // ficava sem data, quebrando "idade do estoque" e "última venda" pra todo
+  // produto do dashboard.
+  data: ["DataFechamento", "DataModificacao", "DataVenda", "Data", "DataEmissao", "DataPedido", "DataFatura", "DataMovimentacao"],
   itensArray: ["Itens", "ItensVenda", "ItensPedido", "Produtos", "ItensFatura"],
   tipoOrdem: ["Tipo", "TipoOrdem", "Categoria"],
   status: ["Status", "Situacao", "StatusOrdem"],
@@ -120,7 +130,17 @@ function estoqueLoteParaMapa(produtosComGrades) {
   const map = new Map();
   for (const p of produtosComGrades) {
     const ref = String(p.referencia ?? "—");
-    map.set(ref, { ref, nome: p.nome || "Produto sem nome", quantidade: p.estoqueTotal || 0, dataEntrada: null });
+    map.set(ref, {
+      ref,
+      nome: p.nome || "Produto sem nome",
+      quantidade: p.estoqueTotal || 0,
+      dataEntrada: null,
+      // Custo/preço unitário (achado em v1/produtos/{id} -> GradesProdutos ->
+      // ValorCusto/ValorVenda; a listagem v1/produtos não traz esses campos).
+      // Ficam 0 até o cache de estoque desse produto atualizar (TTL 1h).
+      custo: p.custo || 0,
+      preco: p.preco || 0,
+    });
   }
   return map;
 }
