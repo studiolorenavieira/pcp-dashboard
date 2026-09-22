@@ -48,6 +48,7 @@ const FIELD_ALIASES = {
   ordemRef: ["OrdemProducao", "NumeroOrdem", "Ordem"],
   itemCor: ["Cor"],
   itemTamanho: ["Tamanho"],
+  itemColecao: ["Colecao"],
 };
 
 function f(obj, key) {
@@ -290,12 +291,20 @@ function aggregateEstoquePorProduto(estoqueNorm) {
 // v1/ordensproducao/produtos, que traz uma linha por ordem+produto+grade.
 // Ver groupProdutosPorOrdem() logo abaixo — a tela de Producao busca os dois
 // endpoints e junta pelo numero da ordem (ref <-> OrdemProducao).
+//
+// NOTA sobre "tipo" (CÁPSULA vs REPOSIÇÃO): removido em 22/09/2026. O campo
+// "Tipo" da DAPIC em v1/ordensproducao é uma classificação de produto
+// ("Produto Acabado" em 100% das ordens testadas), não uma classificação de
+// negócio cápsula/reposição — checamos também Observacao e ReferenciaExterna
+// (ambos sempre vazios) e todo o retorno de v1/ordensproducao/produtos
+// (Colecao, Grupo, Marca, Referencia do produto): nenhum campo da DAPIC
+// distingue cápsula de reposição. Por isso o badge foi trocado pela Coleção
+// real (ex: "Agosto/2026"), que vem de v1/ordensproducao/produtos.
 function normalizeOrdens(registros) {
   return registros.map((reg) => ({
     ref: String(f(reg, "produtoRef") ?? "—"),
     nome: f(reg, "produtoNome") ?? null,
     quantidade: Number(f(reg, "quantidade")) || 0,
-    tipo: (f(reg, "tipoOrdem") || "").toString().toUpperCase().includes("CAPS") ? "CAPSULA" : "REPOSICAO",
     status: (f(reg, "status") || "").toString(),
     dataPrevisao: parseAnyDate(f(reg, "dataPrevisao")),
     dataConclusao: parseAnyDate(f(reg, "dataConclusao")),
@@ -303,9 +312,9 @@ function normalizeOrdens(registros) {
 }
 
 // Agrupa as linhas de v1/ordensproducao/produtos (uma por ordem+produto+
-// grade) pelo número da ordem, para anexar nome/cor/tamanho/quantidade de
-// produto a cada ordem de v1/ordensproducao (que sozinha não traz essa
-// info). Devolve um Map: ref da ordem -> [{ nome, cor, tamanho, quantidade }].
+// grade) pelo número da ordem, para anexar nome/cor/tamanho/quantidade/coleção
+// de produto a cada ordem de v1/ordensproducao (que sozinha não traz essa
+// info). Devolve um Map: ref da ordem -> [{ nome, cor, tamanho, quantidade, colecao }].
 function groupProdutosPorOrdem(registros) {
   const map = new Map();
   for (const reg of registros) {
@@ -317,6 +326,7 @@ function groupProdutosPorOrdem(registros) {
       cor: (f(reg, "itemCor") ?? "").toString(),
       tamanho: (f(reg, "itemTamanho") ?? "").toString(),
       quantidade: Number(f(reg, "quantidade")) || 0,
+      colecao: (f(reg, "itemColecao") ?? "").toString(),
     });
   }
   return map;
