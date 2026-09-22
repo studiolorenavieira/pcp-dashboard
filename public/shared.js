@@ -45,6 +45,9 @@ const FIELD_ALIASES = {
   dataEntradaEstoque: ["DataUltimaEntrada", "DataEntrada", "DataUltimaMovimentacao", "DataCompra", "DataCadastro"],
   produtoCusto: ["Custo", "ValorCusto", "PrecoCusto", "CustoMedio"],
   produtoPreco: ["PrecoVenda", "ValorVenda", "Preco", "PrecoTabela"],
+  ordemRef: ["OrdemProducao", "NumeroOrdem", "Ordem"],
+  itemCor: ["Cor"],
+  itemTamanho: ["Tamanho"],
 };
 
 function f(obj, key) {
@@ -279,13 +282,14 @@ function aggregateEstoquePorProduto(estoqueNorm) {
   return map;
 }
 
-// NOTA: a DAPIC nao retorna nome/SKU de produto em v1/ordensproducao (nem na
-// listagem, nem no detalhe por Id) — confirmado testando os 501 registros
-// ativos: nenhum tem produtoNome, ReferenciaExterna ou Observacao preenchidos,
-// e a "Referencia" da ordem e um numero de documento (ex: 250424140115NL),
-// nao o codigo do produto no catalogo. Por isso `nome` fica null aqui de
-// proposito, e a tela de Producao usa o numero da ordem (ref) como
-// identificador principal em vez de tentar mostrar um nome inexistente.
+// NOTA: v1/ordensproducao (listagem/detalhe da ordem) nunca traz nome/SKU do
+// produto — a "Referencia" da ordem e um numero de documento (ex:
+// 250424140115NL), nao o codigo do produto no catalogo. Por isso `nome` fica
+// null aqui de proposito. O nome real vem de um endpoint separado, nao
+// documentado publicamente pela DAPIC (achado em ajuda.dapic.com.br):
+// v1/ordensproducao/produtos, que traz uma linha por ordem+produto+grade.
+// Ver groupProdutosPorOrdem() logo abaixo — a tela de Producao busca os dois
+// endpoints e junta pelo numero da ordem (ref <-> OrdemProducao).
 function normalizeOrdens(registros) {
   return registros.map((reg) => ({
     ref: String(f(reg, "produtoRef") ?? "—"),
@@ -296,6 +300,26 @@ function normalizeOrdens(registros) {
     dataPrevisao: parseAnyDate(f(reg, "dataPrevisao")),
     dataConclusao: parseAnyDate(f(reg, "dataConclusao")),
   }));
+}
+
+// Agrupa as linhas de v1/ordensproducao/produtos (uma por ordem+produto+
+// grade) pelo número da ordem, para anexar nome/cor/tamanho/quantidade de
+// produto a cada ordem de v1/ordensproducao (que sozinha não traz essa
+// info). Devolve um Map: ref da ordem -> [{ nome, cor, tamanho, quantidade }].
+function groupProdutosPorOrdem(registros) {
+  const map = new Map();
+  for (const reg of registros) {
+    const ordemRef = String(f(reg, "ordemRef") ?? "").trim();
+    if (!ordemRef) continue;
+    if (!map.has(ordemRef)) map.set(ordemRef, []);
+    map.get(ordemRef).push({
+      nome: f(reg, "produtoNome") ?? "Produto sem nome",
+      cor: (f(reg, "itemCor") ?? "").toString(),
+      tamanho: (f(reg, "itemTamanho") ?? "").toString(),
+      quantidade: Number(f(reg, "quantidade")) || 0,
+    });
+  }
+  return map;
 }
 
 /* ------------------------------- Sidebar --------------------------------- */
