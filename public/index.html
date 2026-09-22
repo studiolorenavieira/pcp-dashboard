@@ -26,6 +26,13 @@
           <button data-days="180">180d</button>
           <button data-days="365">365d</button>
         </div>
+        <div id="custom-range" style="display:flex; gap:6px; align-items:center">
+          <input type="date" id="date-from" title="De" />
+          <span class="muted" style="font-size:12px">até</span>
+          <input type="date" id="date-to" title="Até" />
+          <button id="btn-apply-range" title="Aplicar período personalizado">Aplicar</button>
+          <button id="btn-clear-range" title="Voltar para período padrão" style="display:none">✕</button>
+        </div>
         <button id="btn-refresh" class="primary">↻ Atualizar</button>
       </div>
     </div>
@@ -105,6 +112,16 @@ let periodDays = 90;
 let currentFilter = "todos";
 let rankingData = [];
 let deadStockData = [];
+let customRange = null; // { from: "YYYY-MM-DD", to: "YYYY-MM-DD" } quando um período personalizado está ativo
+
+const hojeISO = isoDate(new Date());
+document.getElementById("date-from").max = hojeISO;
+document.getElementById("date-to").max = hojeISO;
+
+function fmtDateBR(iso) {
+  const [y, m, d] = iso.split("-");
+  return `${d}/${m}/${y}`;
+}
 
 document.getElementById("period-seg").addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-days]");
@@ -112,6 +129,38 @@ document.getElementById("period-seg").addEventListener("click", (e) => {
   document.querySelectorAll("#period-seg button").forEach((b) => b.classList.remove("active"));
   btn.classList.add("active");
   periodDays = Number(btn.dataset.days);
+  customRange = null;
+  document.getElementById("date-from").value = "";
+  document.getElementById("date-to").value = "";
+  document.getElementById("btn-clear-range").style.display = "none";
+  loadAll();
+});
+
+document.getElementById("btn-apply-range").addEventListener("click", () => {
+  const from = document.getElementById("date-from").value;
+  const to = document.getElementById("date-to").value;
+  if (!from || !to) {
+    alert("Preencha as duas datas (De e Até) para aplicar um período personalizado.");
+    return;
+  }
+  if (from > to) {
+    alert("A data 'De' precisa ser anterior ou igual à data 'Até'.");
+    return;
+  }
+  customRange = { from, to };
+  document.querySelectorAll("#period-seg button").forEach((b) => b.classList.remove("active"));
+  document.getElementById("btn-clear-range").style.display = "";
+  loadAll();
+});
+
+document.getElementById("btn-clear-range").addEventListener("click", () => {
+  customRange = null;
+  document.getElementById("date-from").value = "";
+  document.getElementById("date-to").value = "";
+  document.getElementById("btn-clear-range").style.display = "none";
+  periodDays = 90;
+  document.querySelectorAll("#period-seg button").forEach((b) => b.classList.remove("active"));
+  document.querySelector('#period-seg button[data-days="90"]').classList.add("active");
   loadAll();
 });
 
@@ -191,7 +240,16 @@ async function loadAll() {
   document.getElementById("footer-status").textContent = "Buscando dados…";
 
   try {
-    const periodo = dateRangeParams(periodDays);
+    const periodo = customRange
+      ? { DataInicial: customRange.from, DataFinal: customRange.to }
+      : dateRangeParams(periodDays);
+    // Quando um período personalizado está ativo, recalcula periodDays como o
+    // nº de dias equivalente da janela De→Até, pra manter coerentes os rótulos
+    // de "idade do estoque" e o texto do dead stock, que usam essa variável.
+    if (customRange) {
+      const ms = new Date(customRange.to + "T00:00:00") - new Date(customRange.from + "T00:00:00");
+      periodDays = Math.max(1, Math.round(ms / (1000 * 60 * 60 * 24)) + 1);
+    }
     const [vendaspdv, pedidosvendas, produtos] = await Promise.all([
       apiGet("v1/vendaspdv", periodo),
       apiGet("v1/pedidosvendas", periodo),
@@ -258,7 +316,9 @@ async function loadAll() {
       .sort((a, b) => b.estoque - a.estoque);
     deadStockData = dead;
     renderDeadStock(dead);
-    document.getElementById("dead-stock-sub").textContent = `sem vendas nos últimos ${periodDays} dias`;
+    document.getElementById("dead-stock-sub").textContent = customRange
+      ? `sem vendas entre ${fmtDateBR(customRange.from)} e ${fmtDateBR(customRange.to)}`
+      : `sem vendas nos últimos ${periodDays} dias`;
 
     const champions = linhas.filter((d) => d.st >= 70);
     const stMedio = linhas.length ? linhas.reduce((s, d) => s + d.st, 0) / linhas.length : 0;
