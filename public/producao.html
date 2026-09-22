@@ -128,6 +128,8 @@ function renderTimeline(ordens) {
           const itens = o.itens || [];
           const nomesUnicos = [...new Set(itens.map((i) => i.nome).filter((n) => n && n !== "Produto sem nome"))];
           const nomeTexto = nomesUnicos.length ? nomesUnicos.join(" + ") : "";
+          const colecoesUnicas = [...new Set(itens.map((i) => i.colecao).filter(Boolean))];
+          const colecaoTexto = colecoesUnicas.length ? colecoesUnicas.join(" + ") : "Coleção não informada";
           const itensHTML = itens.length
             ? `<div class="itens-list">${itens
                 .map(
@@ -141,7 +143,7 @@ function renderTimeline(ordens) {
             : "";
           return `
             <div class="order-card ${st.cls}">
-              <div class="tipo-label">${o.tipo === "CAPSULA" ? "CÁPSULA" : "REPOSIÇÃO"}${nomeTexto ? " · " + escapeHTML(nomeTexto) : ""}</div>
+              <div class="tipo-label">${escapeHTML(colecaoTexto)}${nomeTexto ? " · " + escapeHTML(nomeTexto) : ""}</div>
               <div class="ref" style="margin-bottom:8px">Ordem ${escapeHTML(o.ref)}</div>
               ${itensHTML}
               <div class="meta">
