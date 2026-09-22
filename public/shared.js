@@ -59,6 +59,11 @@ const FIELD_ALIASES = {
   itemCor: ["Cor"],
   itemTamanho: ["Tamanho"],
   itemColecao: ["Colecao"],
+  // Grade da produção (v1/ordensproducao/produtos) — usado para cruzar
+  // produzido x estoque atual pela MESMA grade que a DAPIC usa em
+  // v1/produtos/{id} -> GradesProdutos -> Id (== idGrade em estoque-lote).
+  itemIdGrade: ["IdGradeProduto", "IdGrade"],
+  itemDataFinalizacao: ["DataFinalizacaoProducao", "DataFinalizacao", "DataConclusao"],
 };
 
 function f(obj, key) {
@@ -348,6 +353,81 @@ function groupProdutosPorOrdem(registros) {
       quantidade: Number(f(reg, "quantidade")) || 0,
       colecao: (f(reg, "itemColecao") ?? "").toString(),
     });
+  }
+  return map;
+}
+
+// Agrega as mesmas linhas de v1/ordensproducao/produtos, mas por GRADE
+// (referência + cor + tamanho, casando pelo idGrade sempre que a DAPIC o
+// devolve) — para cruzar "quanto já produzi dessa grade" com "quanto tenho
+// em estoque dela agora" (estoque-lote também é por idGrade). Uma grade
+// pode aparecer em várias ordens ao longo do período; aqui somamos tudo.
+// Só entra em "produzidoFinalizado" o que a DAPIC já marcou como concluído
+// (Status contém concluí/finaliz/encerr) — peça ainda em produção não deveria
+// ter saído do "produzido" pra bater com estoque, senão o comparativo mente.
+function aggregateProducaoPorGrade(registros) {
+  const map = new Map();
+  for (const reg of registros) {
+    const idGradeRaw = f(reg, "itemIdGrade");
+    const idGrade = idGradeRaw !== undefined && idGradeRaw !== null ? String(idGradeRaw) : null;
+    const ref = String(f(reg, "produtoRef") ?? "—");
+    const cor = (f(reg, "itemCor") ?? "").toString();
+    const tamanho = (f(reg, "itemTamanho") ?? "").toString();
+    // Sem idGrade (registro incompleto) cai numa chave por ref+cor+tamanho —
+    // menos preciso pra casar com o estoque, mas evita perder a linha.
+    const key = idGrade ?? `ref:${ref}|${cor}|${tamanho}`;
+    if (!map.has(key)) {
+      map.set(key, {
+        idGrade,
+        ref,
+        nome: f(reg, "produtoNome") ?? "Produto sem nome",
+        cor,
+        tamanho,
+        colecao: (f(reg, "itemColecao") ?? "").toString(),
+        produzidoTotal: 0,
+        produzidoFinalizado: 0,
+        ordens: 0,
+        ultimaFinalizacao: null,
+      });
+    }
+    const agg = map.get(key);
+    const quantidade = Number(f(reg, "quantidade")) || 0;
+    const status = (f(reg, "status") || "").toString();
+    const finalizado = /conclu|finaliz|encerr/i.test(status);
+    agg.produzidoTotal += quantidade;
+    agg.ordens += 1;
+    if (finalizado) {
+      agg.produzidoFinalizado += quantidade;
+      const dataFinal = parseAnyDate(f(reg, "itemDataFinalizacao"));
+      if (dataFinal && (!agg.ultimaFinalizacao || dataFinal > agg.ultimaFinalizacao)) {
+        agg.ultimaFinalizacao = dataFinal;
+      }
+    }
+  }
+  return map;
+}
+
+// Constrói um mapa idGrade -> {estoque, custo, preco, ref, nome, cor, tamanho}
+// a partir do retorno de fetchEstoqueCompleto() (mesma fonte usada pelo
+// Sell-through), pra casar com aggregateProducaoPorGrade() acima pela MESMA
+// chave (idGrade). Grade que não aparece aqui = produto/grade fora do
+// catálogo ativo (descontinuado) — o comparativo mostra "—" pra não fingir
+// que o estoque é zero quando na verdade é desconhecido.
+function estoquePorGrade(produtosComGrades) {
+  const map = new Map();
+  for (const p of produtosComGrades) {
+    for (const g of p.grades || []) {
+      if (g.idGrade === undefined || g.idGrade === null) continue;
+      map.set(String(g.idGrade), {
+        estoque: g.estoque || 0,
+        custo: g.custo || 0,
+        preco: g.preco || 0,
+        ref: p.referencia,
+        nome: p.nome,
+        cor: g.cor,
+        tamanho: g.tamanho,
+      });
+    }
   }
   return map;
 }
