@@ -74,6 +74,35 @@
       </div>
     </div>
 
+    <div class="panel">
+      <div class="panel-header">
+        <h2>Produzido × Estoque atual (por grade)</h2>
+        <span class="muted" style="font-size:11.5px">peças já finalizadas na produção (últimos 3 meses) vs. estoque ao vivo na DAPIC, cor + tamanho — "saiu" = produzido − estoque atual</span>
+      </div>
+      <div class="kpi-row" id="prod-est-kpi-row" style="padding: 0 18px 14px;">
+        <div class="kpi"><div class="label">Produzido no período</div><div class="value" id="kpi-prod-total">—</div></div>
+        <div class="kpi"><div class="label">Em estoque agora</div><div class="value" id="kpi-prod-estoque">—</div></div>
+        <div class="kpi"><div class="label">Saiu (vendido/distribuído)</div><div class="value good" id="kpi-prod-saiu">—</div></div>
+        <div class="kpi"><div class="label">Grades sem estoque conferido</div><div class="value" id="kpi-prod-semestoque">—</div></div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th data-key="ref">Ref</th>
+              <th data-key="nome">Produto</th>
+              <th data-key="grade">Cor · Tamanho</th>
+              <th data-key="produzido" class="num">Produzido</th>
+              <th data-key="estoque" class="num">Estoque atual</th>
+              <th data-key="saiu" class="num">Saiu</th>
+              <th data-key="saiuPct" class="num">% saiu</th>
+            </tr>
+          </thead>
+          <tbody id="prod-est-body"><tr><td colspan="7" class="empty-state">Carregando…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
     <div class="footer-note">
       <span id="footer-status">—</span>
       <span id="last-update-footer"></span>
@@ -93,6 +122,33 @@ metaInput.addEventListener("change", () => {
 });
 
 document.getElementById("btn-refresh").addEventListener("click", loadAll);
+
+let prodEstData = [];
+
+function renderProdEstoque(data) {
+  const body = document.getElementById("prod-est-body");
+  if (!data.length) {
+    body.innerHTML = `<tr><td colspan="7" class="empty-state">Nenhuma peça finalizada no período consultado.</td></tr>`;
+    return;
+  }
+  body.innerHTML = data
+    .map((d) => {
+      const estoqueTxt = d.estoque === null ? `<span class="badge neutral">—</span>` : fmtInt(d.estoque);
+      const saiuTxt = d.saiu === null ? "—" : fmtInt(d.saiu);
+      const saiuPctTxt = d.saiuPct === null ? "—" : fmtPct(d.saiuPct);
+      return `
+      <tr>
+        <td class="mono">${escapeHTML(d.ref)}</td>
+        <td>${escapeHTML(d.nome)}</td>
+        <td>${escapeHTML([d.cor, d.tamanho].filter(Boolean).join(" · ") || "—")}</td>
+        <td class="num mono">${fmtInt(d.produzido)}</td>
+        <td class="num mono">${estoqueTxt}</td>
+        <td class="num mono">${saiuTxt}</td>
+        <td class="num mono">${saiuPctTxt}</td>
+      </tr>`;
+    })
+    .join("");
+}
 
 function statusInfo(ordem) {
   const hoje = new Date();
@@ -210,8 +266,9 @@ async function loadAll() {
     // publicamente pela DAPIC). Busca à parte e tolerante a falha: se este
     // endpoint cair, as ordens continuam aparecendo, só sem o nome do produto.
     let produtosPorOrdem = new Map();
+    let rawProdutos = [];
     try {
-      const rawProdutos = await apiGet("v1/ordensproducao/produtos", { DataInicial: isoDate(inicio), DataFinal: isoDate(fim) });
+      rawProdutos = await apiGet("v1/ordensproducao/produtos", { DataInicial: isoDate(inicio), DataFinal: isoDate(fim) });
       produtosPorOrdem = groupProdutosPorOrdem(rawProdutos);
     } catch (err) {
       console.error("Falha ao buscar nomes de produto das ordens:", err);
@@ -225,7 +282,54 @@ async function loadAll() {
     renderKPIs(ordens);
 
     setConnStatus("ok", "conectado");
-    document.getElementById("footer-status").textContent = `${ordens.length} ordens de produção carregadas`;
+    document.getElementById("footer-status").textContent = `${ordens.length} ordens de produção carregadas — buscando estoque para cruzar…`;
+
+    // Produzido (finalizado, por grade) x estoque atual — reusa o mesmo
+    // fetch em lote (com cache de 1h no backend) que a tela Sell-through usa,
+    // então se você já abriu o Sell-through hoje isso carrega rápido.
+    try {
+      const producaoPorGrade = aggregateProducaoPorGrade(rawProdutos);
+      const produtosComGrades = await fetchEstoqueCompleto((carregados, total) => {
+        const pct = total ? Math.round((carregados / total) * 100) : 0;
+        const msg = `Buscando estoque… ${carregados}/${total} produtos (${pct}%) — pode levar alguns minutos na primeira consulta do dia (a DAPIC limita a 60 requisições/min)`;
+        document.getElementById("footer-status").textContent = msg;
+        document.getElementById("prod-est-body").innerHTML = `<tr><td colspan="7" class="empty-state">${escapeHTML(msg)}</td></tr>`;
+      });
+      const estoqueMap = estoquePorGrade(produtosComGrades);
+
+      const linhas = [];
+      let totalProduzido = 0, totalEstoque = 0, totalSaiu = 0, semEstoque = 0;
+      for (const g of producaoPorGrade.values()) {
+        if (g.produzidoFinalizado <= 0) continue; // nada concluído ainda pra essa grade — não há o que comparar
+        const est = g.idGrade ? estoqueMap.get(g.idGrade) : null;
+        const estoqueAtual = est ? est.estoque : null;
+        const saiu = estoqueAtual === null ? null : g.produzidoFinalizado - estoqueAtual;
+        const saiuPct = saiu === null ? null : (saiu / g.produzidoFinalizado) * 100;
+        if (estoqueAtual === null) semEstoque++;
+        else { totalEstoque += estoqueAtual; totalSaiu += saiu; }
+        totalProduzido += g.produzidoFinalizado;
+        linhas.push({
+          ref: g.ref, nome: est?.nome || g.nome, cor: g.cor, tamanho: g.tamanho,
+          grade: [g.cor, g.tamanho].filter(Boolean).join(" · ") || "—",
+          produzido: g.produzidoFinalizado, estoque: estoqueAtual, saiu, saiuPct,
+        });
+      }
+      linhas.sort((a, b) => b.produzido - a.produzido);
+      prodEstData = linhas;
+      renderProdEstoque(linhas);
+
+      document.getElementById("kpi-prod-total").textContent = fmtInt(totalProduzido);
+      document.getElementById("kpi-prod-estoque").textContent = fmtInt(totalEstoque);
+      document.getElementById("kpi-prod-saiu").textContent = fmtInt(totalSaiu);
+      document.getElementById("kpi-prod-semestoque").textContent = fmtInt(semEstoque) + " grades";
+
+      document.getElementById("footer-status").textContent =
+        `${ordens.length} ordens de produção · ${linhas.length} grades produzidas e finalizadas cruzadas com estoque`;
+    } catch (err) {
+      console.error("Falha ao cruzar produção com estoque:", err);
+      document.getElementById("prod-est-body").innerHTML = `<tr><td colspan="7" class="empty-state">${escapeHTML(err.message)}</td></tr>`;
+    }
+
     setLastUpdate();
     document.getElementById("last-update-footer").textContent = document.getElementById("last-update").textContent;
   } catch (err) {
@@ -235,6 +339,8 @@ async function loadAll() {
     document.getElementById("timeline").innerHTML = `<div class="empty-state">${escapeHTML(err.message)}</div>`;
   }
 }
+
+makeSortable(document.querySelector("#prod-est-body").closest("table").querySelector("thead"), () => prodEstData, (sorted) => { prodEstData = sorted; renderProdEstoque(sorted); });
 
 loadAll();
 </script>
