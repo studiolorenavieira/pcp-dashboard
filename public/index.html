@@ -79,7 +79,7 @@
               <tr>
                 <th data-key="ref">Ref</th>
                 <th data-key="nome">Produto</th>
-                <th data-key="quantidade" class="num">Qtd</th>
+                <th data-key="estoque" class="num">Estoque parado</th>
                 <th data-key="idade" class="num">Dias parado</th>
                 <th data-key="valorImobilizado" class="num">Valor imob.</th>
               </tr>
@@ -178,7 +178,7 @@ function renderDeadStock(data) {
       <tr>
         <td class="mono">${escapeHTML(d.ref)}</td>
         <td>${escapeHTML(d.nome)}</td>
-        <td class="num mono">${fmtInt(d.quantidade)}</td>
+        <td class="num mono">${fmtInt(d.estoque)}</td>
         <td class="num mono">${d.idade}d</td>
         <td class="num mono">${fmtBRL(d.valorImobilizado)}</td>
       </tr>`
@@ -234,9 +234,17 @@ async function loadAll() {
       totalVendido += venda.quantidade;
       totalFaturado += venda.valorTotal;
 
+      // Valor imobilizado = custo unitário (o que cada peça custou pra
+      // fabricar) × estoque parado. Prioriza o custo/preço vindo do próprio
+      // estoque (v1/produtos/{id} -> GradesProdutos, é onde a DAPIC de fato
+      // guarda isso — a listagem v1/produtos não traz preço/custo nenhum,
+      // então cat?.custo/cat?.preco abaixo ficam só como reserva). Sem custo
+      // nem preço cadastrado, cai pro ticket médio de venda do produto.
+      const valorUnitario = estoque.custo || estoque.preco || cat?.custo || cat?.preco || ticket || 0;
+
       linhas.push({
         ref, nome, st, quantidade: venda.quantidade, estoque: estoque.quantidade,
-        idade, ticket, valorImobilizado: estoque.quantidade * (cat?.custo || cat?.preco || ticket || 0),
+        idade, ticket, valorImobilizado: estoque.quantidade * valorUnitario,
       });
     }
 
