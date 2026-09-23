@@ -64,6 +64,13 @@ const FIELD_ALIASES = {
   // v1/produtos/{id} -> GradesProdutos -> Id (== idGrade em estoque-lote).
   itemIdGrade: ["IdGradeProduto", "IdGrade"],
   itemDataFinalizacao: ["DataFinalizacaoProducao", "DataFinalizacao", "DataConclusao"],
+  // Tipo do item dentro de uma venda (v1/vendaspdv -> Produtos[].Tipo):
+  // "Venda" | "Devolução" | "Brinde". Achado em 23/09/2026 ao investigar o
+  // Vestido Marine: a DAPIC devolve os 3 tipos com quantidade/valor SEMPRE
+  // positivos (mesmo sinal de uma venda normal) — quem decide se é
+  // entrada/saída/sem-receita é esse campo, não o sinal do valor. Usado por
+  // flattenVendas() para não contar Devolução e Brinde como venda normal.
+  itemTipoVenda: ["Tipo"],
 };
 
 function f(obj, key) {
@@ -227,6 +234,21 @@ function ageClass(days) {
 // header + array de itens aninhado, e sempre devolve uma lista plana de
 // { ref, nome, quantidade, valorTotal, data }.
 
+// Classifica o campo Tipo de um item de venda (ver FIELD_ALIASES.itemTipoVenda)
+// em "venda" | "devolucao" | "brinde" | "outro". Comparação sem acento/caixa
+// porque já vimos a DAPIC variar (ex.: "Devolução" vs "devolucao").
+function classificarTipoItemVenda(tipoRaw) {
+  const t = String(tipoRaw || "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .trim();
+  if (t.includes("devolu")) return "devolucao";
+  if (t.includes("brinde")) return "brinde";
+  if (t.includes("venda") || t === "") return "venda";
+  return "outro";
+}
+
 function flattenVendas(registros) {
   const linhas = [];
   for (const reg of registros) {
@@ -234,11 +256,19 @@ function flattenVendas(registros) {
     const data = parseAnyDate(f(reg, "data"));
     if (Array.isArray(itensArr) && itensArr.length) {
       for (const item of itensArr) {
+        // A DAPIC manda Devolução/Brinde com quantidade e valor sempre
+        // POSITIVOS (mesmo sinal de uma venda normal) — só o campo Tipo
+        // diferencia. Sem este tratamento, devolução e brinde eram somados
+        // como se fossem venda normal, inflando quantidade vendida,
+        // faturamento e ticket médio no painel inteiro.
+        const tipo = classificarTipoItemVenda(f(item, "itemTipoVenda"));
+        if (tipo === "brinde") continue; // não é venda: mercadoria dada, sem receita — não entra na contagem.
+        const sinal = tipo === "devolucao" ? -1 : 1; // devolução desconta da venda líquida (voltou pro estoque).
         linhas.push({
           ref: String(f(item, "produtoRef") ?? f(reg, "produtoRef") ?? "—"),
           nome: f(item, "produtoNome") ?? f(reg, "produtoNome") ?? "Produto sem nome",
-          quantidade: Number(f(item, "quantidade")) || 0,
-          valorTotal: Number(f(item, "valorTotal")) || 0,
+          quantidade: sinal * (Number(f(item, "quantidade")) || 0),
+          valorTotal: sinal * (Number(f(item, "valorTotal")) || 0),
           data,
         });
       }
