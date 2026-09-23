@@ -249,6 +249,85 @@ function classificarTipoItemVenda(tipoRaw) {
   return "outro";
 }
 
+// Classifica o campo Tipo de um item de consignado (v1/consignados ->
+// Produtos[].Tipo) em "remessa" | "retorno" | "venda" | "outro".
+function classificarTipoItemConsignado(tipoRaw) {
+  const t = String(tipoRaw || "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .trim();
+  if (t.includes("remessa")) return "remessa";
+  if (t.includes("retorno")) return "retorno";
+  if (t.includes("venda")) return "venda";
+  return "outro";
+}
+
+// Busca todos os documentos de consignado num intervalo de datas. A própria
+// function no Supabase já pagina TODAS as páginas da DAPIC internamente numa
+// única chamada (ver comentário no topo do index.ts) — passar Pagina/
+// RegistrosPorPagina aqui faria a function refazer a busca completa a cada
+// chamada nossa, só desperdiçando tempo e cota de requisições.
+async function fetchConsignadosCompleto(periodo) {
+  return apiGet("v1/consignados", periodo);
+}
+
+// Consignado: saldo ainda "fora" (não retornado, e não vendido dentro do
+// próprio consignado) por produto — Remessa menos Retorno menos Venda,
+// somado por documento e depois por referência de produto. Confirmado
+// batendo exato com a coluna "Consignado Remessa" do relatório oficial
+// "Histórico de produto acabado" da DAPIC (Vestido Junia, 23/09/2026: 9
+// peças líquidas de 11 remessas brutas — as 2 restantes já têm um item
+// Tipo=Venda dentro do MESMO documento, ou seja, já viraram venda formal
+// dentro do próprio consignado) — sem precisar cruzar com vendaspdv.
+// Por decisão do Marcelo (23/09/2026): esse saldo conta como "vendido" no
+// dashboard até retornar de fato — quando isso acontecer, a próxima
+// atualização já reflete (a peça sai do saldo pendente automaticamente).
+function aggregateConsignadoPendentePorProduto(registrosConsignados) {
+  const map = new Map(); // ref -> { ref, nome, quantidade, valorTotal }
+  for (const doc of registrosConsignados) {
+    const itens = f(doc, "itensArray") || [];
+    for (const item of itens) {
+      const tipo = classificarTipoItemConsignado(f(item, "itemTipoVenda"));
+      if (tipo === "outro") continue;
+      const ref = String(f(item, "produtoRef") ?? "—");
+      const qtd = Number(f(item, "quantidade")) || 0;
+      const valor = Number(f(item, "valorTotal")) || 0;
+      const sinal = tipo === "remessa" ? 1 : -1; // retorno e venda (dentro do consignado) resolvem a remessa.
+      if (!map.has(ref)) {
+        map.set(ref, { ref, nome: f(item, "produtoNome") || "Produto sem nome", quantidade: 0, valorTotal: 0 });
+      }
+      const agg = map.get(ref);
+      agg.quantidade += sinal * qtd;
+      agg.valorTotal += sinal * valor;
+    }
+  }
+  // Nunca negativo por produto (retorno/venda não deveria superar a remessa,
+  // mas por segurança não deixamos isso diminuir o "vendido").
+  for (const agg of map.values()) {
+    if (agg.quantidade < 0) agg.quantidade = 0;
+    if (agg.valorTotal < 0) agg.valorTotal = 0;
+  }
+  return map;
+}
+
+// Soma o saldo pendente de consignado (aggregateConsignadoPendentePorProduto)
+// dentro de um mapa de vendas (aggregateVendasPorProduto) — ver nota acima.
+// Modifica e devolve o próprio mapa de vendas.
+function mesclarConsignadoPendente(vendasPorProdutoMap, consignadoPendenteMap) {
+  for (const [ref, pend] of consignadoPendenteMap) {
+    if (pend.quantidade <= 0) continue;
+    if (!vendasPorProdutoMap.has(ref)) {
+      vendasPorProdutoMap.set(ref, { ref, nome: pend.nome, quantidade: 0, valorTotal: 0, ultimaVenda: null });
+    }
+    const agg = vendasPorProdutoMap.get(ref);
+    agg.quantidade += pend.quantidade;
+    agg.valorTotal += pend.valorTotal;
+    if (!agg.nome || agg.nome === "Produto sem nome") agg.nome = pend.nome;
+  }
+  return vendasPorProdutoMap;
+}
+
 function flattenVendas(registros) {
   const linhas = [];
   for (const reg of registros) {
