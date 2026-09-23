@@ -276,12 +276,16 @@ async function loadAll() {
     const inicioHistorico = new Date();
     inicioHistorico.setMonth(inicioHistorico.getMonth() - 25);
 
-    const [vendaspdv, pedidosvendas, vendasHist, pedidosHist, produtos] = await Promise.all([
+    const [vendaspdv, pedidosvendas, vendasHist, pedidosHist, produtos, consignados] = await Promise.all([
       apiGet("v1/vendaspdv", periodo),
       apiGet("v1/pedidosvendas", periodo),
       apiGet("v1/vendaspdv", { DataInicial: isoDate(inicioHistorico), DataFinal: isoDate(fimHistorico) }),
       apiGet("v1/pedidosvendas", { DataInicial: isoDate(inicioHistorico), DataFinal: isoDate(fimHistorico) }),
       apiGet("v1/produtos", {}),
+      fetchConsignadosCompleto({ DataInicial: isoDate(inicioHistorico), DataFinal: isoDate(fimHistorico) }).catch((e) => {
+        console.warn("Não foi possível carregar consignados pendentes:", e);
+        return [];
+      }),
     ]);
 
     allProdutosCache = [...buildProdutoCatalog(produtos).values()];
@@ -289,6 +293,9 @@ async function loadAll() {
 
     const linhasPeriodo = [...flattenVendas(vendaspdv), ...flattenVendas(pedidosvendas)];
     const porProduto = aggregateVendasPorProduto(linhasPeriodo);
+    // Consignado ainda não retornado conta como "vendido" (decisão do
+    // Marcelo, 23/09/2026) — saldo atual, somado à venda do período.
+    mesclarConsignadoPendente(porProduto, aggregateConsignadoPendentePorProduto(consignados));
 
     const totalFaturamento = [...porProduto.values()].reduce((s, p) => s + p.valorTotal, 0);
     const lista = [...porProduto.values()]
