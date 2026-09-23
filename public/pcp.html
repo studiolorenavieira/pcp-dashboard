@@ -236,10 +236,14 @@ async function loadAll() {
     const inicioHistorico = new Date();
     inicioHistorico.setMonth(inicioHistorico.getMonth() - 13);
 
-    const [vendaspdv, pedidosvendas, ordensRaw] = await Promise.all([
+    const [vendaspdv, pedidosvendas, ordensRaw, consignados] = await Promise.all([
       apiGet("v1/vendaspdv", { DataInicial: isoDate(inicioHistorico), DataFinal: isoDate(fimHistorico) }),
       apiGet("v1/pedidosvendas", { DataInicial: isoDate(inicioHistorico), DataFinal: isoDate(fimHistorico) }),
       apiGet("v1/ordensproducao", { DataInicial: isoDate(inicioHistorico), DataFinal: isoDate(fimHistorico) }),
+      fetchConsignadosCompleto({ DataInicial: isoDate(inicioHistorico), DataFinal: isoDate(fimHistorico) }).catch((e) => {
+        console.warn("Não foi possível carregar consignados pendentes:", e);
+        return [];
+      }),
     ]);
 
     const produtosComGrades = await fetchEstoqueCompleto((carregados, total) => {
@@ -250,7 +254,12 @@ async function loadAll() {
     });
     const estoquePorProduto = estoqueLoteParaMapa(produtosComGrades);
 
-    const linhas = [...flattenVendas(vendaspdv), ...flattenVendas(pedidosvendas)].filter((l) => l.data);
+    // Consignado ainda não resolvido conta como demanda histórica também,
+    // datado por quando a remessa saiu (decisão do Marcelo, 23/09/2026 —
+    // mesmo princípio já aplicado no Sell-through e na Curva ABC). O estoque
+    // atual (abaixo) já vem líquido de consignado direto da DAPIC, então
+    // isso só entra do lado da demanda, não duplica no lado do estoque.
+    const linhas = [...flattenVendas(vendaspdv), ...flattenVendas(pedidosvendas), ...flattenConsignadosPendentesDatado(consignados)].filter((l) => l.data);
     const ordens = normalizeOrdens(ordensRaw);
 
     // agrupa por produto: total últimos 12 meses (p/ média) e total no mesmo mês do ano anterior
