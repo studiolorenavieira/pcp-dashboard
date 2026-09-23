@@ -269,6 +269,21 @@ async function loadAll() {
     const vendasPorProduto = aggregateVendasPorProduto(linhasVenda);
     const catalogo = buildProdutoCatalog(produtos);
 
+    // Consignado ainda não retornado conta como "vendido" (decisão do
+    // Marcelo, 23/09/2026) — é um saldo atual (não do período selecionado),
+    // por isso busca uma janela larga fixa de 25 meses, igual ao histórico
+    // usado em produtos.html.
+    try {
+      const fimConsig = new Date();
+      const inicioConsig = new Date();
+      inicioConsig.setMonth(inicioConsig.getMonth() - 25);
+      const consignados = await fetchConsignadosCompleto({ DataInicial: isoDate(inicioConsig), DataFinal: isoDate(fimConsig) });
+      const pendentePorProduto = aggregateConsignadoPendentePorProduto(consignados);
+      mesclarConsignadoPendente(vendasPorProduto, pendentePorProduto);
+    } catch (e) {
+      console.warn("Não foi possível carregar consignados pendentes:", e);
+    }
+
     const refs = new Set([...vendasPorProduto.keys(), ...estoquePorProduto.keys()]);
     const linhas = [];
     let totalVendido = 0, totalFaturado = 0;
