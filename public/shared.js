@@ -53,6 +53,11 @@ const FIELD_ALIASES = {
   dataPrevisao: ["DataPrevisao", "DataPrevisaoEntrega", "DataEntrega", "DataPrevista"],
   dataConclusao: ["DataConclusao", "DataFinalizacao", "DataEncerramento"],
   dataEntradaEstoque: ["DataUltimaEntrada", "DataEntrada", "DataUltimaMovimentacao", "DataCompra", "DataCadastro"],
+  // Data em que o documento de consignado foi criado (quando a remessa
+  // saiu). Alias própria (em vez de reaproveitar dataEntradaEstoque, que
+  // tem outro propósito) pra deixar claro o uso em
+  // flattenConsignadosPendentesDatado() — ver nota lá.
+  dataCadastroConsignado: ["DataCadastro"],
   produtoCusto: ["Custo", "ValorCusto", "PrecoCusto", "CustoMedio"],
   produtoPreco: ["PrecoVenda", "ValorVenda", "Preco", "PrecoTabela"],
   ordemRef: ["OrdemProducao", "NumeroOrdem", "Ordem"],
@@ -326,6 +331,52 @@ function mesclarConsignadoPendente(vendasPorProdutoMap, consignadoPendenteMap) {
     if (!agg.nome || agg.nome === "Produto sem nome") agg.nome = pend.nome;
   }
   return vendasPorProdutoMap;
+}
+
+// Consignado: mesma lógica de aggregateConsignadoPendentePorProduto, mas
+// preservando a data de CADA documento (DataCadastro — quando a remessa
+// saiu) em vez de somar tudo num total único. Cada documento com saldo
+// líquido ainda pendente (remessa − retorno − venda-no-mesmo-documento > 0)
+// vira uma linha no mesmo formato de flattenVendas() (ref, nome, quantidade,
+// valorTotal, data), pra entrar nos mesmos cálculos de média mensal/
+// sazonalidade que já usam vendaspdv/pedidosvendas. Usado só pela demanda
+// histórica do Sugestão de PCP (pcp.html) — NÃO mexe no estoque atual nem no
+// KPI "Saiu" de producao.html: confirmado (23/09/2026, relatório oficial da
+// DAPIC pro Vestido Junia: OP 40, Consignado Remessa 9, Venda Normal 3,
+// Brinde 1, Resultado 27 = 40 − 9 − 3 − 1) que a própria DAPIC já desconta
+// as peças em consignado do estoque que ela informa — então estoqueAtual
+// (vindo de estoque-lote) e o "saiu" de producao.html já ficam corretos sem
+// nenhum ajuste. O único ponto cego é a demanda histórica: total12m e
+// mesAnoAnterior em pcp.html somam só vendaspdv/pedidosvendas, que não
+// incluem peças ainda presas em consignado sem resolução — esta function
+// preenche essa lacuna.
+function flattenConsignadosPendentesDatado(registrosConsignados) {
+  const linhas = [];
+  for (const doc of registrosConsignados) {
+    const dataDoc = parseAnyDate(f(doc, "dataCadastroConsignado"));
+    if (!dataDoc) continue;
+    const itens = f(doc, "itensArray") || [];
+    const porRef = new Map(); // ref -> { ref, nome, quantidade, valorTotal }
+    for (const item of itens) {
+      const tipo = classificarTipoItemConsignado(f(item, "itemTipoVenda"));
+      if (tipo === "outro") continue;
+      const ref = String(f(item, "produtoRef") ?? "—");
+      const qtd = Number(f(item, "quantidade")) || 0;
+      const valor = Number(f(item, "valorTotal")) || 0;
+      const sinal = tipo === "remessa" ? 1 : -1; // retorno e venda (dentro do consignado) resolvem a remessa.
+      if (!porRef.has(ref)) {
+        porRef.set(ref, { ref, nome: f(item, "produtoNome") || "Produto sem nome", quantidade: 0, valorTotal: 0 });
+      }
+      const agg = porRef.get(ref);
+      agg.quantidade += sinal * qtd;
+      agg.valorTotal += sinal * valor;
+    }
+    for (const agg of porRef.values()) {
+      if (agg.quantidade <= 0) continue; // documento já resolvido (retornou ou virou venda) — não conta mais como pendente.
+      linhas.push({ ref: agg.ref, nome: agg.nome, quantidade: agg.quantidade, valorTotal: Math.max(0, agg.valorTotal), data: dataDoc });
+    }
+  }
+  return linhas;
 }
 
 function flattenVendas(registros) {
