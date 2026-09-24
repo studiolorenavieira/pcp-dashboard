@@ -323,7 +323,7 @@ function mesclarConsignadoPendente(vendasPorProdutoMap, consignadoPendenteMap) {
   for (const [ref, pend] of consignadoPendenteMap) {
     if (pend.quantidade <= 0) continue;
     if (!vendasPorProdutoMap.has(ref)) {
-      vendasPorProdutoMap.set(ref, { ref, nome: pend.nome, quantidade: 0, valorTotal: 0, ultimaVenda: null });
+      vendasPorProdutoMap.set(ref, { ref, nome: pend.nome, quantidade: 0, valorTotal: 0, ultimaVenda: null, primeiraVenda: null });
     }
     const agg = vendasPorProdutoMap.get(ref);
     agg.quantidade += pend.quantidade;
@@ -442,12 +442,13 @@ function buildProdutoCatalog(registros) {
 function aggregateVendasPorProduto(linhas) {
   const map = new Map();
   for (const l of linhas) {
-    if (!map.has(l.ref)) map.set(l.ref, { ref: l.ref, nome: l.nome, quantidade: 0, valorTotal: 0, ultimaVenda: null });
+    if (!map.has(l.ref)) map.set(l.ref, { ref: l.ref, nome: l.nome, quantidade: 0, valorTotal: 0, ultimaVenda: null, primeiraVenda: null });
     const agg = map.get(l.ref);
     agg.quantidade += l.quantidade;
     agg.valorTotal += l.valorTotal;
     if (l.nome && l.nome !== "Produto sem nome") agg.nome = l.nome;
     if (l.data && (!agg.ultimaVenda || l.data > agg.ultimaVenda)) agg.ultimaVenda = l.data;
+    if (l.data && (!agg.primeiraVenda || l.data < agg.primeiraVenda)) agg.primeiraVenda = l.data;
   }
   return map;
 }
