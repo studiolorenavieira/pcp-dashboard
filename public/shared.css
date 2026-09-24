@@ -363,7 +363,7 @@ tbody tr:last-child td { border-bottom: none; }
   vertical-align: middle;
   margin-right: 8px;
 }
-.st-bar-fill { height: 100%; border-radius: 4px; }
+.st-bar-fill { display: block; height: 100%; border-radius: 4px; }
 
 /* ---------- Misc ---------- */
 .muted { color: var(--muted); }
