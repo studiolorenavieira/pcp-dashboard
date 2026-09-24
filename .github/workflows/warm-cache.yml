@@ -10,12 +10,19 @@ name: Aquecer cache de estoque
 # de ~1.1s entre produtos nao cacheados) e processa o que couber em ~20s;
 # por isso este job repete a chamada, seguindo a paginacao (proximoOffset),
 # ate passar por todo o catalogo (~550 produtos ativos) ou ate o limite de
-# rodadas abaixo. Rodando a cada 15 min, o cache (TTL de 1h) nunca fica
-# velho o suficiente para o usuario sentir a demora.
+# rodadas abaixo.
+#
+# SCHEDULE REMOVIDO em 24/09/2026: o agendamento a cada 15 min do GitHub
+# Actions nao estava disparando de forma confiavel (so a cada ~5h na
+# pratica - o GitHub despriorizada cron de alta frequencia em repos com
+# pouca atividade), deixando o cache esfriar e travando o dashboard. O
+# aquecimento agora roda direto no Postgres do Supabase via pg_cron/pg_net
+# (7 jobs "aquecer-cache-estoque-N", 1x por hora, escalonados nos primeiros
+# 12 min de cada hora - ver SQL em warm_cache_pgcron.sql), que roda dentro
+# da infra do proprio Supabase e nao depende do agendador do GitHub. Este
+# workflow fica so como acionamento manual, se precisar aquecer na mao.
 
 on:
-  schedule:
-    - cron: '*/15 * * * *'
   workflow_dispatch: {}
 
 jobs:
