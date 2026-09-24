@@ -67,10 +67,11 @@
                 <th data-key="quantidade" class="num">Vendido</th>
                 <th data-key="estoque" class="num">Estoque</th>
                 <th data-key="idade">Idade estoque</th>
+                <th data-key="velocidade">Ritmo de venda</th>
                 <th data-key="ticket" class="num">Ticket médio</th>
               </tr>
             </thead>
-            <tbody id="ranking-body"><tr><td colspan="8" class="empty-state">Carregando…</td></tr></tbody>
+            <tbody id="ranking-body"><tr><td colspan="9" class="empty-state">Carregando…</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -187,6 +188,13 @@ function ageBadge(days) {
   return `<span class="badge ${ageClass(days)}">${texto}</span>`;
 }
 
+function velocidadeTexto(janela, velocidade) {
+  if (janela === null || velocidade === null) return `<span class="muted">—</span>`;
+  const diasTexto = janela === 0 ? "mesmo dia" : `${janela}d`;
+  const vel = velocidade.toLocaleString("pt-BR", { maximumFractionDigits: 1 });
+  return `${diasTexto} · ${vel}/dia`;
+}
+
 function renderRanking(data) {
   let filtered = data;
   if (currentFilter === "champions") filtered = data.filter((d) => d.st >= 70);
@@ -195,7 +203,7 @@ function renderRanking(data) {
 
   const body = document.getElementById("ranking-body");
   if (!filtered.length) {
-    body.innerHTML = `<tr><td colspan="8" class="empty-state">Nenhum produto nesse filtro.</td></tr>`;
+    body.innerHTML = `<tr><td colspan="9" class="empty-state">Nenhum produto nesse filtro.</td></tr>`;
     return;
   }
   body.innerHTML = filtered
@@ -209,6 +217,7 @@ function renderRanking(data) {
         <td class="num mono">${fmtInt(d.quantidade)}</td>
         <td class="num mono">${fmtInt(d.estoque)}</td>
         <td>${ageBadge(d.idade)}</td>
+        <td class="mono">${velocidadeTexto(d.janela, d.velocidade)}</td>
         <td class="num mono">${fmtBRLCents(d.ticket)}</td>
       </tr>`
     )
@@ -260,7 +269,7 @@ async function loadAll() {
       const pct = total ? Math.round((carregados / total) * 100) : 0;
       const msg = `Buscando estoque… ${carregados}/${total} produtos (${pct}%) — pode levar alguns minutos na primeira consulta do dia (a DAPIC limita a 60 requisições/min)`;
       document.getElementById("footer-status").textContent = msg;
-      document.getElementById("ranking-body").innerHTML = `<tr><td colspan="8" class="empty-state">${escapeHTML(msg)}</td></tr>`;
+      document.getElementById("ranking-body").innerHTML = `<tr><td colspan="9" class="empty-state">${escapeHTML(msg)}</td></tr>`;
       document.getElementById("dead-body").innerHTML = `<tr><td colspan="5" class="empty-state">${escapeHTML(msg)}</td></tr>`;
     });
     const estoquePorProduto = estoqueLoteParaMapa(produtosComGrades);
@@ -302,6 +311,14 @@ async function loadAll() {
       // "Idade" = dias desde a última venda dentro do período carregado. Se não
       // vendeu nada no período, tratamos como "sem venda há pelo menos periodDays".
       const idade = venda.ultimaVenda ? daysAgo(venda.ultimaVenda) : (estoque.quantidade > 0 ? periodDays : null);
+      // Janela de venda = dias entre a primeira e a última venda dentro do
+      // período carregado (não é desde que a peça "nasceu" — só o que dá pra
+      // ver na janela selecionada). Velocidade = vendido ÷ janela, peças/dia.
+      let janela = null;
+      if (venda.primeiraVenda && venda.ultimaVenda) {
+        janela = Math.max(0, Math.round((venda.ultimaVenda - venda.primeiraVenda) / (1000 * 60 * 60 * 24)));
+      }
+      const velocidade = venda.quantidade > 0 && janela !== null ? venda.quantidade / Math.max(janela, 1) : null;
       const ticket = venda.quantidade > 0 ? venda.valorTotal / venda.quantidade : 0;
 
       totalVendido += venda.quantidade;
@@ -317,7 +334,7 @@ async function loadAll() {
 
       linhas.push({
         ref, nome, st, quantidade: venda.quantidade, estoque: estoque.quantidade,
-        idade, ticket, valorImobilizado: estoque.quantidade * valorUnitario,
+        idade, janela, velocidade, ticket, valorImobilizado: estoque.quantidade * valorUnitario,
       });
     }
 
@@ -358,7 +375,7 @@ async function loadAll() {
     console.error(err);
     setConnStatus("err", "erro na conexão");
     document.getElementById("footer-status").textContent = "Erro: " + err.message;
-    document.getElementById("ranking-body").innerHTML = `<tr><td colspan="8" class="empty-state">${escapeHTML(err.message)}</td></tr>`;
+    document.getElementById("ranking-body").innerHTML = `<tr><td colspan="9" class="empty-state">${escapeHTML(err.message)}</td></tr>`;
     document.getElementById("dead-body").innerHTML = `<tr><td colspan="5" class="empty-state">${escapeHTML(err.message)}</td></tr>`;
   }
 }
