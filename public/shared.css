@@ -327,6 +327,7 @@ thead th {
 }
 thead th:hover { color: var(--text); }
 thead th.sorted { color: var(--accent); }
+thead th[title] { cursor: help; text-decoration: underline dotted var(--muted); text-underline-offset: 3px; }
 
 tbody td {
   padding: 9px 12px;
