@@ -63,12 +63,12 @@
                 <th data-key="pos">#</th>
                 <th data-key="ref">Referência</th>
                 <th data-key="nome">Produto</th>
-                <th data-key="st">Sell-through</th>
-                <th data-key="quantidade" class="num">Vendido</th>
-                <th data-key="estoque" class="num">Estoque</th>
-                <th data-key="idade">Idade estoque</th>
-                <th data-key="velocidade">Ritmo de venda</th>
-                <th data-key="ticket" class="num">Ticket médio</th>
+                <th data-key="st" title="Vendido ÷ (Vendido + Estoque), em %. Mostra quanto do que já foi disponibilizado já foi vendido — não indica velocidade de venda.">Sell-through</th>
+                <th data-key="quantidade" class="num" title="Quantidade vendida no período selecionado (inclui consignado ainda não devolvido).">Vendido</th>
+                <th data-key="estoque" class="num" title="Estoque atual na DAPIC — só o armazenador Estoque Loja.">Estoque</th>
+                <th data-key="idade" title="Dias desde a última venda registrada até hoje. Não é a data de produção.">Idade estoque</th>
+                <th data-key="velocidade" title="Dias entre a primeira e a última venda no período, e peças vendidas por dia nesse intervalo. É uma média — não mostra picos de venda.">Ritmo de venda</th>
+                <th data-key="ticket" class="num" title="Valor médio por peça vendida (faturamento ÷ quantidade).">Ticket médio</th>
               </tr>
             </thead>
             <tbody id="ranking-body"><tr><td colspan="9" class="empty-state">Carregando…</td></tr></tbody>
@@ -87,9 +87,9 @@
               <tr>
                 <th data-key="ref">Ref</th>
                 <th data-key="nome">Produto</th>
-                <th data-key="estoque" class="num">Estoque parado</th>
-                <th data-key="idade" class="num">Dias parado</th>
-                <th data-key="valorImobilizado" class="num">Valor imob.</th>
+                <th data-key="estoque" class="num" title="Peças em estoque que não venderam nada no período selecionado.">Estoque parado</th>
+                <th data-key="idade" class="num" title="Dias desde a última venda dessa peça até hoje.">Dias parado</th>
+                <th data-key="valorImobilizado" class="num" title="Estoque parado × custo (ou preço, se não tiver custo cadastrado) — capital parado nessas peças.">Valor imob.</th>
               </tr>
             </thead>
             <tbody id="dead-body"><tr><td colspan="5" class="empty-state">Carregando…</td></tr></tbody>
