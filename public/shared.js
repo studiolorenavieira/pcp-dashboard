@@ -415,6 +415,34 @@ function flattenVendas(registros) {
   return linhas;
 }
 
+// Como flattenVendas, mas mantém Grupo (categoria) e Cor de cada item —
+// usado só pela análise "por características" da Curva ABC (produtos.html).
+// Mesma lógica de filtro de devolução/brinde, pra bater com os totais do
+// resto da tela. Grupo/Cor só existem no item de venda em si (não em
+// v1/produtos), então essa análise só enxerga combinações que já venderam.
+function flattenVendasPorAtributo(registros) {
+  const linhas = [];
+  for (const reg of registros) {
+    const itensArr = f(reg, "itensArray");
+    if (!Array.isArray(itensArr)) continue;
+    for (const item of itensArr) {
+      const tipo = classificarTipoItemVenda(f(item, "itemTipoVenda"));
+      if (tipo === "brinde") continue;
+      const sinal = tipo === "devolucao" ? -1 : 1;
+      const quantidade = sinal * (Number(f(item, "quantidade")) || 0);
+      const valorTotal = sinal * (Number(f(item, "valorTotal")) || 0);
+      if (quantidade === 0) continue;
+      linhas.push({
+        grupo: item.Grupo || "(sem categoria)",
+        cor: item.Cor || "(sem cor)",
+        quantidade,
+        valorTotal,
+      });
+    }
+  }
+  return linhas;
+}
+
 function normalizeEstoque(registros) {
   return registros.map((reg) => ({
     ref: String(f(reg, "produtoRef") ?? "—"),
