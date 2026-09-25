@@ -57,11 +57,11 @@
               <tr>
                 <th data-key="ref">Ref</th>
                 <th data-key="nome">Produto</th>
-                <th data-key="mediaMensal" class="num">Média mensal</th>
-                <th data-key="mesAnoAnterior" class="num">Mesmo mês (ano ant.)</th>
-                <th data-key="estoqueAtual" class="num">Estoque atual</th>
-                <th data-key="emProducao" class="num">Em produção</th>
-                <th data-key="sugestao" class="num">Sugestão</th>
+                <th data-key="mediaMensal" class="num" title="Média de vendas mensais nos últimos 12 meses.">Média mensal</th>
+                <th data-key="mesAnoAnterior" class="num" title="Quantidade vendida nesse mesmo mês, no ano anterior — base sazonal da projeção quando existe.">Mesmo mês (ano ant.)</th>
+                <th data-key="estoqueAtual" class="num" title="Estoque ao vivo na DAPIC — Estoque Loja.">Estoque atual</th>
+                <th data-key="emProducao" class="num" title="Quantidade já em ordens de produção abertas pra essa referência.">Em produção</th>
+                <th data-key="sugestao" class="num" title="Projeção de demanda (mesmo mês do ano anterior, ajustado pelo fator de crescimento, ou média mensal se não tiver histórico) menos estoque atual e o que já está em produção.">Sugestão</th>
               </tr>
             </thead>
             <tbody id="reposicao-body"><tr><td colspan="7" class="empty-state">Carregando…</td></tr></tbody>
