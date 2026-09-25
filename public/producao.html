@@ -91,11 +91,11 @@
             <tr>
               <th data-key="ref">Ref</th>
               <th data-key="nome">Produto</th>
-              <th data-key="grade">Cor · Tamanho</th>
-              <th data-key="produzido" class="num">Produzido</th>
-              <th data-key="estoque" class="num">Estoque atual</th>
-              <th data-key="saiu" class="num">Saiu</th>
-              <th data-key="saiuPct" class="num">% saiu</th>
+              <th data-key="grade" title="Grade (cor + tamanho) dessa referência, pelo idGrade da DAPIC.">Cor · Tamanho</th>
+              <th data-key="produzido" class="num" title="Peças finalizadas em ordens de produção nos últimos 3 meses.">Produzido</th>
+              <th data-key="estoque" class="num" title="Estoque ao vivo na DAPIC pra essa grade — Estoque Loja.">Estoque atual</th>
+              <th data-key="saiu" class="num" title="Produzido − Estoque atual. Aproxima o que já saiu da produção: vendido, consignado, brinde etc.">Saiu</th>
+              <th data-key="saiuPct" class="num" title="Saiu ÷ Produzido, em %.">% saiu</th>
             </tr>
           </thead>
           <tbody id="prod-est-body"><tr><td colspan="7" class="empty-state">Carregando…</td></tr></tbody>
