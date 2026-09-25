@@ -49,11 +49,17 @@
       <div class="panel">
         <div class="panel-header">
           <h2>Ranking de produtos</h2>
-          <div class="seg" id="filter-seg">
-            <button data-f="todos" class="active">Todos</button>
-            <button data-f="champions">Champions</button>
-            <button data-f="atencao">Atenção</button>
-            <button data-f="risco">Risco</button>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <input type="text" id="produto-filtro" class="search-input" style="min-width:180px" placeholder="Filtrar por referência ou nome…" />
+            <select id="colecao-filtro" style="min-width:150px">
+              <option value="">Todas as coleções</option>
+            </select>
+            <div class="seg" id="filter-seg">
+              <button data-f="todos" class="active">Todos</button>
+              <button data-f="champions">Champions</button>
+              <button data-f="atencao">Atenção</button>
+              <button data-f="risco">Risco</button>
+            </div>
           </div>
         </div>
         <div class="table-wrap">
@@ -114,6 +120,8 @@ let currentFilter = "todos";
 let rankingData = [];
 let deadStockData = [];
 let customRange = null; // { from: "YYYY-MM-DD", to: "YYYY-MM-DD" } quando um período personalizado está ativo
+let searchQuery = ""; // filtro de texto (referência ou nome) no ranking
+let colecaoFiltro = ""; // filtro de coleção selecionado no ranking ("" = todas)
 
 const hojeISO = isoDate(new Date());
 document.getElementById("date-from").max = hojeISO;
@@ -174,6 +182,16 @@ document.getElementById("filter-seg").addEventListener("click", (e) => {
   renderRanking(rankingData);
 });
 
+document.getElementById("produto-filtro").addEventListener("input", debounce((e) => {
+  searchQuery = e.target.value.trim().toLowerCase();
+  renderRanking(rankingData);
+}, 200));
+
+document.getElementById("colecao-filtro").addEventListener("change", (e) => {
+  colecaoFiltro = e.target.value;
+  renderRanking(rankingData);
+});
+
 document.getElementById("btn-refresh").addEventListener("click", loadAll);
 
 function stBar(pct) {
@@ -200,6 +218,13 @@ function renderRanking(data) {
   if (currentFilter === "champions") filtered = data.filter((d) => d.st >= 70);
   else if (currentFilter === "atencao") filtered = data.filter((d) => d.st >= 40 && d.st < 70);
   else if (currentFilter === "risco") filtered = data.filter((d) => d.st < 40);
+
+  if (searchQuery) {
+    filtered = filtered.filter((d) => d.ref.toLowerCase().includes(searchQuery) || d.nome.toLowerCase().includes(searchQuery));
+  }
+  if (colecaoFiltro) {
+    filtered = filtered.filter((d) => d.colecoes && d.colecoes.includes(colecaoFiltro));
+  }
 
   const body = document.getElementById("ranking-body");
   if (!filtered.length) {
@@ -264,6 +289,28 @@ async function loadAll() {
       apiGet("v1/pedidosvendas", periodo),
       apiGet("v1/produtos", {}),
     ]);
+
+    // Coleção por produto (pro filtro de coleção) — vem de
+    // v1/ordensproducao/produtos, mesma fonte que a tela de Produção usa.
+    // Cobre qualquer peça já produzida (não só quem vendeu no período), por
+    // isso a mesma janela larga de 25 meses usada no saldo de consignado
+    // abaixo. Tolerante a falha: se cair, o filtro de coleção só fica vazio.
+    let colecaoPorProduto = new Map();
+    try {
+      const fimColecao = new Date();
+      const inicioColecao = new Date();
+      inicioColecao.setMonth(inicioColecao.getMonth() - 25);
+      const ordensProdutos = await apiGet("v1/ordensproducao/produtos", { DataInicial: isoDate(inicioColecao), DataFinal: isoDate(fimColecao) });
+      colecaoPorProduto = buildColecaoPorProduto(ordensProdutos);
+      const colecaoSelect = document.getElementById("colecao-filtro");
+      const colecoesOrdenadas = [...new Set([...colecaoPorProduto.values()].flatMap((s) => [...s]))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+      const valorAtual = colecaoSelect.value;
+      colecaoSelect.innerHTML = `<option value="">Todas as coleções</option>` + colecoesOrdenadas.map((c) => `<option value="${escapeHTML(c)}">${escapeHTML(c)}</option>`).join("");
+      if (colecoesOrdenadas.includes(valorAtual)) colecaoSelect.value = valorAtual;
+      else colecaoFiltro = "";
+    } catch (e) {
+      console.warn("Não foi possível carregar coleção por produto:", e);
+    }
 
     const produtosComGrades = await fetchEstoqueCompleto((carregados, total) => {
       const pct = total ? Math.round((carregados / total) * 100) : 0;
@@ -335,6 +382,7 @@ async function loadAll() {
       linhas.push({
         ref, nome, st, quantidade: venda.quantidade, estoque: estoque.quantidade,
         idade, janela, velocidade, ticket, valorImobilizado: estoque.quantidade * valorUnitario,
+        colecoes: [...(colecaoPorProduto.get(ref) || [])],
       });
     }
 
