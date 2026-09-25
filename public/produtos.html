@@ -30,6 +30,16 @@
   .legend { display:flex; gap:16px; font-size:11.5px; color:var(--muted); margin-top:8px; }
   .legend span { display:flex; align-items:center; gap:6px; }
   .legend .dot { width:10px; height:10px; border-radius:2px; }
+  .attr-grid { display:grid; grid-template-columns: repeat(3, 1fr); gap:24px; }
+  @media (max-width: 1100px) { .attr-grid { grid-template-columns: 1fr; } }
+  .attr-title { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:0.03em; margin:0 0 10px; font-weight:600; }
+  .bar-row-attr { padding:7px 0; border-bottom:1px solid var(--border); }
+  .bar-row-attr:last-child { border-bottom:none; }
+  .bar-row-attr .bar-label-attr-name { font-size:12px; font-weight:600; margin-bottom:2px; }
+  .bar-row-attr .bar-label-attr-sub { font-size:10.5px; color:var(--muted); margin-bottom:4px; }
+  .bar-row-attr .bar-track-attr { height:8px; background:var(--surface2); border-radius:4px; overflow:hidden; margin-bottom:3px; }
+  .bar-row-attr .bar-fill-attr { height:100%; background:var(--accent); border-radius:4px; }
+  .bar-row-attr .bar-value-attr { font-size:11px; font-family:'DM Mono',monospace; color:var(--text); display:flex; justify-content:space-between; }
 </style>
 </head>
 <body>
@@ -83,6 +93,27 @@
           </thead>
           <tbody id="abc-body"><tr><td colspan="7" class="empty-state">Carregando…</td></tr></tbody>
         </table>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-bottom:16px">
+      <div class="panel-header">
+        <h2>Análise por características</h2>
+        <span class="muted" style="font-size:11.5px">categoria, cor e faixa de preço — mesmo período selecionado acima, dá pra achar padrão entre as peças que mais faturam</span>
+      </div>
+      <div class="attr-grid" style="padding:16px 18px;">
+        <div>
+          <h3 class="attr-title">Por categoria</h3>
+          <div id="attr-categoria"></div>
+        </div>
+        <div>
+          <h3 class="attr-title">Por cor <span class="muted" style="font-size:10.5px; font-weight:400;">(top 15)</span></h3>
+          <div id="attr-cor"></div>
+        </div>
+        <div>
+          <h3 class="attr-title">Por faixa de preço</h3>
+          <div id="attr-preco"></div>
+        </div>
       </div>
     </div>
 
@@ -147,6 +178,65 @@ function renderBarChart(top20) {
       </div>`
     )
     .join("");
+}
+
+function faixaDePreco(precoUnit) {
+  if (!(precoUnit > 0)) return "(sem preço)";
+  if (precoUnit < 150) return "Até R$150";
+  if (precoUnit < 250) return "R$150–250";
+  if (precoUnit < 350) return "R$250–350";
+  if (precoUnit < 500) return "R$350–500";
+  return "Acima de R$500";
+}
+const ORDEM_FAIXAS = ["Até R$150", "R$150–250", "R$250–350", "R$350–500", "Acima de R$500", "(sem preço)"];
+
+function agruparPorAtributo(linhas, keyFn) {
+  const map = new Map();
+  let totalFat = 0;
+  for (const l of linhas) {
+    const k = keyFn(l);
+    if (!map.has(k)) map.set(k, { nome: k, quantidade: 0, faturamento: 0 });
+    const g = map.get(k);
+    g.quantidade += l.quantidade;
+    g.faturamento += l.valorTotal;
+    totalFat += l.valorTotal;
+  }
+  return [...map.values()].map((g) => ({
+    ...g,
+    ticket: g.quantidade > 0 ? g.faturamento / g.quantidade : 0,
+    pctTotal: totalFat > 0 ? (g.faturamento / totalFat) * 100 : 0,
+  }));
+}
+
+function renderAtributoBars(elId, grupos) {
+  const el = document.getElementById(elId);
+  if (!grupos.length) { el.innerHTML = `<div class="empty-state" style="padding:12px 0;">Sem dados no período.</div>`; return; }
+  const max = Math.max(...grupos.map((g) => g.faturamento), 1);
+  el.innerHTML = grupos
+    .map(
+      (g) => `
+      <div class="bar-row-attr">
+        <div class="bar-label-attr-name">${escapeHTML(g.nome)}</div>
+        <div class="bar-label-attr-sub">${fmtInt(g.quantidade)} peças · ticket médio ${fmtBRLCents(g.ticket)}</div>
+        <div class="bar-track-attr"><div class="bar-fill-attr" style="width:${(g.faturamento / max) * 100}%"></div></div>
+        <div class="bar-value-attr"><span>${fmtBRL(g.faturamento)}</span><span class="muted">${g.pctTotal.toFixed(1)}% do fat.</span></div>
+      </div>`
+    )
+    .join("");
+}
+
+function renderAnaliseAtributos(linhasAtributo) {
+  const porCategoria = agruparPorAtributo(linhasAtributo, (l) => l.grupo).sort((a, b) => b.faturamento - a.faturamento);
+  renderAtributoBars("attr-categoria", porCategoria);
+
+  const porCor = agruparPorAtributo(linhasAtributo, (l) => l.cor)
+    .sort((a, b) => b.faturamento - a.faturamento)
+    .slice(0, 15);
+  renderAtributoBars("attr-cor", porCor);
+
+  const porFaixa = agruparPorAtributo(linhasAtributo, (l) => faixaDePreco(l.quantidade !== 0 ? l.valorTotal / l.quantidade : 0))
+    .sort((a, b) => ORDEM_FAIXAS.indexOf(a.nome) - ORDEM_FAIXAS.indexOf(b.nome));
+  renderAtributoBars("attr-preco", porFaixa);
 }
 
 function renderABCTable(data) {
@@ -292,6 +382,9 @@ async function loadAll() {
     vendasFlatCache = [...flattenVendas(vendasHist), ...flattenVendas(pedidosHist)].filter((l) => l.data);
 
     const linhasPeriodo = [...flattenVendas(vendaspdv), ...flattenVendas(pedidosvendas)];
+
+    const linhasAtributo = [...flattenVendasPorAtributo(vendaspdv), ...flattenVendasPorAtributo(pedidosvendas)];
+    renderAnaliseAtributos(linhasAtributo);
     const porProduto = aggregateVendasPorProduto(linhasPeriodo);
     // Consignado ainda não retornado conta como "vendido" (decisão do
     // Marcelo, 23/09/2026) — saldo atual, somado à venda do período.
