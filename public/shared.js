@@ -546,6 +546,25 @@ function groupProdutosPorOrdem(registros) {
   return map;
 }
 
+// Mapa ref do produto -> Set de coleções em que ele já apareceu, a partir de
+// v1/ordensproducao/produtos (mesma fonte de groupProdutosPorOrdem acima).
+// Ao contrário da Colecao vinda das linhas de venda (usada em
+// flattenVendasPorAtributo), esta cobre qualquer peça já produzida, mesmo
+// sem nenhuma venda no período — inclusive as do dead stock, que é
+// justamente onde filtrar por coleção mais ajuda. Um produto pode aparecer
+// em mais de uma coleção (ex.: reposição) — por isso Set, não valor único.
+function buildColecaoPorProduto(registros) {
+  const map = new Map();
+  for (const reg of registros) {
+    const ref = String(f(reg, "produtoRef") ?? "—");
+    const colecao = (f(reg, "itemColecao") ?? "").toString().trim();
+    if (!colecao) continue;
+    if (!map.has(ref)) map.set(ref, new Set());
+    map.get(ref).add(colecao);
+  }
+  return map;
+}
+
 // Agrega as mesmas linhas de v1/ordensproducao/produtos, mas por GRADE
 // (referência + cor + tamanho, casando pelo idGrade sempre que a DAPIC o
 // devolve) — para cruzar "quanto já produzi dessa grade" com "quanto tenho
